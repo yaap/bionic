@@ -71,6 +71,7 @@ static uintptr_t cfi_check_addr(uint16_t v, void* Ptr) {
 }
 
 static inline void cfi_slowpath_common(uint64_t CallSiteTypeId, void* Ptr, void* DiagData) {
+  return;
   uint16_t v = shadow_load(Ptr);
   switch (v) {
     case CFIShadow::kInvalidShadow:
