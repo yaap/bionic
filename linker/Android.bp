@@ -410,11 +410,8 @@ cc_binary {
                 "liblinker_debuggerd_stub",
             ],
         },
-        android_arm64: {
-            cflags: ["-fsplit-machine-functions"],
-            ldflags: ["-fsplit-machine-functions"],
-        },
     },
+
     afdo: true,
 }
 
