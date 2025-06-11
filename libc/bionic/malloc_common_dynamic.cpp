@@ -379,7 +379,7 @@ extern "C" void je_set_zero_filling(bool val);
 #endif
 
 // Initializes memory allocation framework once per process.
-static void MallocInitImpl(libc_globals* globals) {
+void MallocInitImpl(libc_globals* globals) {
   char prop[PROP_VALUE_MAX];
   char* options = prop;
 
@@ -420,13 +420,6 @@ static void MallocInitImpl(libc_globals* globals) {
     // heapprofd signal handler invocations.
     HeapprofdRememberHookConflict();
   }
-}
-
-// Initializes memory allocation framework.
-// This routine is called from __libc_init routines in libc_init_dynamic.cpp.
-__BIONIC_WEAK_FOR_NATIVE_BRIDGE
-__LIBC_HIDDEN__ void __libc_init_malloc(libc_globals* globals) {
-  MallocInitImpl(globals);
 }
 
 // =============================================================================
