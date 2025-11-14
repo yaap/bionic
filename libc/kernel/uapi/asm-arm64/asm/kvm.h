@@ -22,7 +22,6 @@
 #define __KVM_HAVE_VCPU_EVENTS
 #define KVM_COALESCED_MMIO_PAGE_OFFSET 1
 #define KVM_DIRTY_LOG_PAGE_OFFSET 64
-#define KVM_REG_SIZE(id) (1U << (((id) & KVM_REG_SIZE_MASK) >> KVM_REG_SIZE_SHIFT))
 struct kvm_regs {
   struct user_pt_regs regs;
   __u64 sp_el1;
@@ -262,6 +261,7 @@ enum {
 #define KVM_PSCI_RET_INVAL PSCI_RET_INVALID_PARAMS
 #define KVM_PSCI_RET_DENIED PSCI_RET_DENIED
 #define KVM_SYSTEM_EVENT_RESET_FLAG_PSCI_RESET2 (1ULL << 0)
+#define KVM_SYSTEM_EVENT_SHUTDOWN_FLAG_PSCI_OFF2 (1ULL << 0)
 #define KVM_EXIT_FAIL_ENTRY_CPU_UNSUPPORTED (1ULL << 0)
 enum kvm_smccc_filter_action {
   KVM_SMCCC_FILTER_HANDLE = 0,

@@ -266,8 +266,8 @@ __socket:socket(int, int, int)              arm,lp64
 __socketpair:socketpair(int, int, int, int*)    arm,lp64
 bind(int, struct sockaddr*, socklen_t)  arm,lp64
 __connect:connect(int, struct sockaddr*, socklen_t)   arm,lp64
-listen(int, int)                   arm,lp64
-__accept4:accept4(int, struct sockaddr*, socklen_t*, int)  arm,lp64
+listen(int, int) all
+__accept4:accept4(int, struct sockaddr*, socklen_t*, int)  all
 getsockname(int, struct sockaddr*, socklen_t*)  arm,lp64
 getpeername(int, struct sockaddr*, socklen_t*)  arm,lp64
 __sendto:sendto(int, const void*, size_t, int, const struct sockaddr*, socklen_t)  arm,lp64
@@ -277,14 +277,13 @@ setsockopt(int, int, int, const void*, socklen_t)  arm,lp64
 getsockopt(int, int, int, void*, socklen_t*)    arm,lp64
 __recvmsg:recvmsg(int, struct msghdr*, unsigned int)   arm,lp64
 __sendmsg:sendmsg(int, const struct msghdr*, unsigned int)  arm,lp64
-__recvmmsg:recvmmsg(int, struct mmsghdr*, unsigned int, int, const struct timespec*)   arm,lp64
-__sendmmsg:sendmmsg(int, struct mmsghdr*, unsigned int, int)   arm,lp64
+__recvmmsg:recvmmsg(int, struct mmsghdr*, unsigned int, int, const struct timespec*)   all
+__sendmmsg:sendmmsg(int, struct mmsghdr*, unsigned int, int)   all
 
 # sockets for x86. These are done as an "indexed" call to socketcall syscall.
 __socket:socketcall:1(int, int, int) x86
 bind:socketcall:2(int, struct sockaddr*, int)  x86
 __connect:socketcall:3(int, struct sockaddr*, socklen_t)   x86
-listen:socketcall:4(int, int)                   x86
 getsockname:socketcall:6(int, struct sockaddr*, socklen_t*)  x86
 getpeername:socketcall:7(int, struct sockaddr*, socklen_t*)  x86
 __socketpair:socketcall:8(int, int, int, int*)    x86
@@ -295,9 +294,6 @@ setsockopt:socketcall:14(int, int, int, const void*, socklen_t)  x86
 getsockopt:socketcall:15(int, int, int, void*, socklen_t*)    x86
 __sendmsg:socketcall:16(int, const struct msghdr*, unsigned int)  x86
 __recvmsg:socketcall:17(int, struct msghdr*, unsigned int)   x86
-__accept4:socketcall:18(int, struct sockaddr*, socklen_t*, int)  x86
-__recvmmsg:socketcall:19(int, struct mmsghdr*, unsigned int, int, const struct timespec*)   x86
-__sendmmsg:socketcall:20(int, struct mmsghdr*, unsigned int, int)   x86
 
 # scheduler & real-time
 sched_get_priority_max(int policy) all

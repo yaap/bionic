@@ -81,7 +81,7 @@ FdEntry* FdTableImpl<inline_fds>::at(size_t idx) {
 
     size_t required_count = max - inline_fds;
     size_t required_size = sizeof(FdTableOverflow) + required_count * sizeof(FdEntry);
-    size_t aligned_size = __BIONIC_ALIGN(required_size, page_size());
+    size_t aligned_size = __builtin_align_up(required_size, page_size());
     size_t aligned_count = (aligned_size - sizeof(FdTableOverflow)) / sizeof(FdEntry);
 
     void* allocation =
@@ -385,8 +385,11 @@ android_fdsan_error_level android_fdsan_set_error_level_from_property(
 
 int close(int fd) {
   int rc = android_fdsan_close_with_tag(fd, 0);
+
+  // See the "close" section of bionic/docs/EINTR.md for more.
   if (rc == -1 && errno == EINTR) {
     return 0;
   }
+
   return rc;
 }

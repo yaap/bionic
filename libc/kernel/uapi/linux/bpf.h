@@ -273,6 +273,7 @@ enum bpf_attach_type {
   BPF_NETKIT_PRIMARY,
   BPF_NETKIT_PEER,
   BPF_TRACE_KPROBE_SESSION,
+  BPF_TRACE_UPROBE_SESSION,
   __MAX_BPF_ATTACH_TYPE
 };
 #define MAX_BPF_ATTACH_TYPE __MAX_BPF_ATTACH_TYPE
@@ -455,6 +456,7 @@ union bpf_attr {
     __u32 core_relo_rec_size;
     __u32 log_true_size;
     __s32 prog_token_fd;
+    __u32 fd_array_cnt;
   };
   struct {
     __aligned_u64 pathname;

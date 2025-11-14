@@ -209,14 +209,17 @@ int hooks_posix_memalign(void** memptr, size_t alignment, size_t size) {
   return g_dispatch->posix_memalign(memptr, alignment, size);
 }
 
-int hooks_malloc_iterate(uintptr_t, size_t, void (*)(uintptr_t, size_t, void*), void*) {
-  return 0;
+int hooks_malloc_iterate(uintptr_t base, size_t size,
+                         void (*callback)(uintptr_t base, size_t size, void* arg), void* arg) {
+  return g_dispatch->malloc_iterate(base, size, callback, arg);
 }
 
 void hooks_malloc_disable() {
+  g_dispatch->malloc_disable();
 }
 
 void hooks_malloc_enable() {
+  g_dispatch->malloc_enable();
 }
 
 ssize_t hooks_malloc_backtrace(void*, uintptr_t*, size_t) {
@@ -230,7 +233,7 @@ bool hooks_write_malloc_leak_info(FILE*) {
 #if defined(HAVE_DEPRECATED_MALLOC_FUNCS)
 void* hooks_pvalloc(size_t bytes) {
   size_t pagesize = getpagesize();
-  size_t size = __BIONIC_ALIGN(bytes, pagesize);
+  size_t size = __builtin_align_up(bytes, pagesize);
   if (size < bytes) {
     // Overflow
     errno = ENOMEM;

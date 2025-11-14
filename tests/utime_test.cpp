@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,24 +26,27 @@
  * SUCH DAMAGE.
  */
 
-#include <stddef.h>
+#include <gtest/gtest.h>
 
-#include <private/bionic_ifuncs.h>
+#include <utime.h>
 
-extern "C" {
+#include <android-base/file.h>
 
-DEFINE_IFUNC_FOR(memset) {
-  __builtin_cpu_init();
-  if (__builtin_cpu_supports("avx2")) RETURN_FUNC(memset_func_t, memset_avx2);
-  RETURN_FUNC(memset_func_t, memset_generic);
+TEST(utime, utime) {
+  TemporaryFile tf;
+
+  utimbuf ut;
+  ut.actime = 123;
+  ut.modtime = 456;
+  ASSERT_EQ(0, utime(tf.path, &ut)) << strerror(errno);
+
+  struct stat sb;
+  ASSERT_EQ(0, stat(tf.path, &sb));
+  ASSERT_EQ(ut.actime, static_cast<long>(sb.st_atime));
+  ASSERT_EQ(ut.modtime, static_cast<long>(sb.st_mtime));
 }
-MEMSET_SHIM()
 
-DEFINE_IFUNC_FOR(__memset_chk) {
-  __builtin_cpu_init();
-  if (__builtin_cpu_supports("avx2")) RETURN_FUNC(__memset_chk_func_t, __memset_chk_avx2);
-  RETURN_FUNC(__memset_chk_func_t, __memset_chk_generic);
+TEST(utime, utime_null) {
+  TemporaryFile tf;
+  ASSERT_EQ(0, utime(tf.path, nullptr)) << strerror(errno);
 }
-__MEMSET_CHK_SHIM()
-
-}  // extern "C"

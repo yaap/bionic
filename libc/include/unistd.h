@@ -101,11 +101,9 @@ pid_t fork(void);
  *
  * Available since API level 35.
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(35)
 pid_t _Fork(void) __INTRODUCED_IN(35);
 #endif /* __BIONIC_AVAILABILITY_GUARD(35) */
-
 
 /**
  * [vfork(2)](https://man7.org/linux/man-pages/man2/vfork.2.html) creates a new
@@ -154,7 +152,6 @@ int execle(const char* _Nonnull __path, const char* _Nullable __arg0, ... /*,  c
 #if __BIONIC_AVAILABILITY_GUARD(28)
 int fexecve(int __fd, char* _Nullable const* _Nullable __argv, char* _Nullable const* _Nullable __envp) __INTRODUCED_IN(28);
 #endif /* __BIONIC_AVAILABILITY_GUARD(28) */
-
 
 int nice(int __incr);
 
@@ -260,7 +257,6 @@ char* _Nullable getlogin(void);
 int getlogin_r(char* _Nonnull __buffer, size_t __buffer_size) __INTRODUCED_IN(28);
 #endif /* __BIONIC_AVAILABILITY_GUARD(28) */
 
-
 long fpathconf(int __fd, int __name);
 long pathconf(const char* _Nonnull __path, int __name);
 
@@ -294,10 +290,22 @@ int chdir(const char* _Nonnull __path);
 int fchdir(int __fd);
 
 int rmdir(const char* _Nonnull __path);
+
+/**
+ * [pipe(2)](https://man7.org/linux/man-pages/man2/pipe.2.html) creates a pipe.
+ *
+ * Returns 0 on success, and returns -1 and sets `errno` on failure.
+ */
 int pipe(int __fds[_Nonnull 2]);
-#if defined(__USE_GNU)
+
+/**
+ * [pipe2(2)](https://man7.org/linux/man-pages/man2/pipe2.2.html) creates a pipe,
+ * with flags.
+ *
+ * Returns 0 on success, and returns -1 and sets `errno` on failure.
+ */
 int pipe2(int __fds[_Nonnull 2], int __flags);
-#endif
+
 int chroot(const char* _Nonnull __path);
 int symlink(const char* _Nonnull __old_path, const char* _Nonnull __new_path);
 int symlinkat(const char* _Nonnull __old_path, int __new_dir_fd, const char* _Nonnull __new_path);
@@ -309,13 +317,22 @@ int fchownat(int __dir_fd, const char* _Nonnull __path, uid_t __owner, gid_t __g
 int lchown(const char* _Nonnull __path, uid_t __owner, gid_t __group);
 char* _Nullable getcwd(char* _Nullable __buf, size_t __size);
 
+/**
+ * [sync(2)](https://man7.org/linux/man-pages/man2/sync.2.html) syncs changes
+ * to disk, for all file systems.
+ */
 void sync(void);
-#if defined(__USE_GNU)
 
-#if __BIONIC_AVAILABILITY_GUARD(28)
+/**
+ * [syncfs(2)](https://man7.org/linux/man-pages/man2/sync.2.html) syncs changes
+ * to disk, for the file system corresponding to the given file descriptor.
+ *
+ * Returns 0 on success, and returns -1 and sets `errno` on failure.
+ *
+ * Available since API level 28 when compiling with `_GNU_SOURCE`.
+ */
+#if defined(__USE_GNU) && __BIONIC_AVAILABILITY_GUARD(28)
 int syncfs(int __fd) __INTRODUCED_IN(28);
-#endif /* __BIONIC_AVAILABILITY_GUARD(28) */
-
 #endif
 
 int close(int __fd);
@@ -427,6 +444,8 @@ int tcsetpgrp(int __fd, pid_t __pid);
 
 #if __BIONIC_AVAILABILITY_GUARD(26)
 int getdomainname(char* _Nonnull __buf, size_t __buf_size) __INTRODUCED_IN(26);
+#endif /* __BIONIC_AVAILABILITY_GUARD(26) */
+#if __BIONIC_AVAILABILITY_GUARD(26)
 int setdomainname(const char* _Nonnull __name, size_t __n) __INTRODUCED_IN(26);
 #endif /* __BIONIC_AVAILABILITY_GUARD(26) */
 
@@ -440,7 +459,6 @@ int setdomainname(const char* _Nonnull __name, size_t __n) __INTRODUCED_IN(26);
  * Returns the number of bytes copied on success, and returns -1 and sets
  * `errno` on failure.
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(34)
 ssize_t copy_file_range(int __fd_in, off64_t* _Nullable __off_in, int __fd_out, off64_t* _Nullable __off_out, size_t __length, unsigned int __flags) __INTRODUCED_IN(34);
 #endif /* __BIONIC_AVAILABILITY_GUARD(34) */
@@ -464,7 +482,6 @@ void swab(const void* _Nonnull __src, void* _Nonnull __dst, ssize_t __byte_count
  *
  * Returns 0 on success, and returns -1 and sets `errno` on failure.
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(34)
 int close_range(unsigned int __min_fd, unsigned int __max_fd, int __flags) __INTRODUCED_IN(34);
 #endif /* __BIONIC_AVAILABILITY_GUARD(34) */

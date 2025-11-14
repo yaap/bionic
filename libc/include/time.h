@@ -166,7 +166,6 @@ time_t mktime(struct tm* _Nonnull __tm);
  *
  * Available since API level 35.
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(35)
 time_t mktime_z(timezone_t _Nonnull __tz, struct tm* _Nonnull __tm) __INTRODUCED_IN(35);
 #endif /* __BIONIC_AVAILABILITY_GUARD(35) */
@@ -204,7 +203,6 @@ struct tm* _Nullable localtime_r(const time_t* _Nonnull __t, struct tm* _Nonnull
  *
  * Available since API level 35.
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(35)
 struct tm* _Nullable localtime_rz(timezone_t _Nonnull __tz, const time_t* _Nonnull __t, struct tm* _Nonnull __tm) __INTRODUCED_IN(35);
 #endif /* __BIONIC_AVAILABILITY_GUARD(35) */
@@ -322,9 +320,9 @@ void tzset(void);
  *
  * Available since API level 35.
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(35)
 timezone_t _Nullable tzalloc(const char* _Nullable __id) __INTRODUCED_IN(35);
+#endif /* __BIONIC_AVAILABILITY_GUARD(35) */
 
 /**
  * tzfree(3) frees a timezone object returned by tzalloc().
@@ -335,9 +333,9 @@ timezone_t _Nullable tzalloc(const char* _Nullable __id) __INTRODUCED_IN(35);
  *
  * Available since API level 35.
  */
+#if __BIONIC_AVAILABILITY_GUARD(35)
 void tzfree(timezone_t _Nullable __tz) __INTRODUCED_IN(35);
 #endif /* __BIONIC_AVAILABILITY_GUARD(35) */
-
 
 /**
  * [clock(3)](https://man7.org/linux/man-pages/man3/clock.3.html)
@@ -355,9 +353,8 @@ clock_t clock(void);
  * [clock_getcpuclockid(3)](https://man7.org/linux/man-pages/man3/clock_getcpuclockid.3.html)
  * gets the clock ID of the cpu-time clock for the given `pid`.
  *
- * Returns 0 on success, and returns -1 and returns an error number on failure.
+ * Returns 0 on success, and returns an error number on failure (unlike other clock functions).
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(23)
 int clock_getcpuclockid(pid_t __pid, clockid_t* _Nonnull __clock) __INTRODUCED_IN(23);
 #endif /* __BIONIC_AVAILABILITY_GUARD(23) */
@@ -367,7 +364,7 @@ int clock_getcpuclockid(pid_t __pid, clockid_t* _Nonnull __clock) __INTRODUCED_I
  * [clock_getres(2)](https://man7.org/linux/man-pages/man2/clock_getres.2.html)
  * gets the resolution of the given clock.
  *
- * Returns 0 on success, and returns -1 and returns an error number on failure.
+ * Returns 0 on success, and returns -1 and sets `errno` on failure.
  */
 int clock_getres(clockid_t __clock, struct timespec* _Nullable __resolution);
 
@@ -375,7 +372,7 @@ int clock_getres(clockid_t __clock, struct timespec* _Nullable __resolution);
  * [clock_gettime(2)](https://man7.org/linux/man-pages/man2/clock_gettime.2.html)
  * gets the time according to the given clock.
  *
- * Returns 0 on success, and returns -1 and returns an error number on failure.
+ * Returns 0 on success, and returns -1 and sets `errno` on failure.
  */
 int clock_gettime(clockid_t __clock, struct timespec* _Nonnull __ts);
 
@@ -384,7 +381,7 @@ int clock_gettime(clockid_t __clock, struct timespec* _Nonnull __ts);
  * sleeps for the given time (or until the given time if the TIMER_ABSTIME flag
  * is used), as measured by the given clock.
  *
- * Returns 0 on success, and returns -1 and returns an error number on failure.
+ * Returns 0 on success, and returns an error number on failure (unlike other clock functions).
  * If the sleep was interrupted by a signal, the return value will be `EINTR`
  * and `remainder` will be the amount of time remaining.
  */
@@ -394,7 +391,7 @@ int clock_nanosleep(clockid_t __clock, int __flags, const struct timespec* _Nonn
  * [clock_settime(2)](https://man7.org/linux/man-pages/man2/clock_settime.2.html)
  * sets the time for the given clock.
  *
- * Returns 0 on success, and returns -1 and returns an error number on failure.
+ * Returns 0 on success, and returns -1 and sets `errno` on failure.
  */
 int clock_settime(clockid_t __clock, const struct timespec* _Nonnull __ts);
 
@@ -475,11 +472,9 @@ int timer_getoverrun(timer_t _Nonnull __timer);
  * Available since API level 29 for TIME_UTC; other bases arrived later.
  * Code for Android should prefer clock_gettime().
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(29)
 int timespec_get(struct timespec* _Nonnull __ts, int __base) __INTRODUCED_IN(29);
 #endif /* __BIONIC_AVAILABILITY_GUARD(29) */
-
 
 /**
  * timespec_getres(3) is equivalent to clock_getres() for the clock corresponding to the given base.
@@ -489,10 +484,8 @@ int timespec_get(struct timespec* _Nonnull __ts, int __base) __INTRODUCED_IN(29)
  * Available since API level 35.
  * Code for Android should prefer clock_gettime().
  */
-
 #if __BIONIC_AVAILABILITY_GUARD(35)
 int timespec_getres(struct timespec* _Nonnull __ts, int __base) __INTRODUCED_IN(35);
 #endif /* __BIONIC_AVAILABILITY_GUARD(35) */
-
 
 __END_DECLS

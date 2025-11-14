@@ -25,6 +25,8 @@
 #include <sys/cdefs.h>
 #include <wchar.h>
 
+#include <limits>
+
 #include "utils.h"
 
 #define NUM_WCHARS(num_bytes) ((num_bytes)/sizeof(wchar_t))
@@ -62,7 +64,26 @@ constexpr bool kLibcSupportsParsingBinaryLiterals = true;
 
 TEST(wchar, sizeof_wchar_t) {
   EXPECT_EQ(4U, sizeof(wchar_t));
+}
+
+TEST(wchar, sizeof_wint_t) {
   EXPECT_EQ(4U, sizeof(wint_t));
+}
+
+TEST(stdint, wchar_sign) {
+#if defined(__arm__) || defined(__aarch64__)
+  EXPECT_FALSE(std::numeric_limits<wchar_t>::is_signed);
+#else
+  EXPECT_TRUE(std::numeric_limits<wchar_t>::is_signed);
+#endif
+}
+
+#if !defined(__WINT_UNSIGNED__)
+#error wint_t is unsigned on Android
+#endif
+
+TEST(stdint, wint_sign) {
+  EXPECT_FALSE(std::numeric_limits<wint_t>::is_signed);
 }
 
 TEST(wchar, mbrlen) {
@@ -1320,4 +1341,23 @@ TEST(wchar, wmemset) {
   ASSERT_EQ(dst[3], wchar_t(0));
   ASSERT_EQ(dst, wmemset(dst, L'y', 0));
   ASSERT_EQ(dst[0], wchar_t(0x12345678));
+}
+
+TEST(wchar, btowc) {
+  // This function only works for single-byte "wide" characters.
+  ASSERT_EQ(wint_t('a'), btowc('a'));
+  // It _truncates_ the input to unsigned char.
+  ASSERT_EQ(wint_t(0x66), btowc(0x666));
+  // And rejects anything with the top bit set.
+  ASSERT_EQ(WEOF, btowc(0xa0));
+}
+
+TEST(wchar, wctob) {
+  // This function only works for single-byte "wide" characters.
+  ASSERT_EQ('a', wctob(L'a'));
+  // And rejects anything that would have the top bit set.
+  ASSERT_EQ(EOF, wctob(0xa0));
+  // There's no truncation here (unlike btowc()),
+  // so this is rejected rather than seen as 0x66 ('f').
+  ASSERT_EQ(EOF, wctob(0x666));
 }

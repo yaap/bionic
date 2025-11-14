@@ -31,6 +31,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/param.h>
 #include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -182,8 +183,8 @@ bool ElfReader::Read(const char* name, int fd, off64_t file_offset, off64_t file
     did_read_ = true;
   }
 
-  if (kPageSize == 16*1024 && min_align_ == 4096) {
-    // This prop needs to be read on 16KiB devices for each ELF where min_palign is 4KiB.
+  if (kPageSize == 16 * 1024 && min_align_ < kPageSize) {
+    // This prop needs to be read on 16KiB devices for each ELF where min_align_ is less than 16KiB.
     // It cannot be cached since the developer may toggle app compat on/off.
     // This check will be removed once app compat is made the default on 16KiB devices.
     should_use_16kib_app_compat_ =
@@ -552,7 +553,7 @@ bool ElfReader::CheckProgramHeaderAlignment() {
     // or a positive, integral power of two.
     // The kernel ignores loadable segments with other values,
     // so we just warn rather than reject them.
-    if ((phdr->p_align & (phdr->p_align - 1)) != 0) {
+    if (!powerof2(phdr->p_align)) {
       DL_WARN("\"%s\" has invalid p_align %zx in phdr %zu", name_.c_str(),
                      static_cast<size_t>(phdr->p_align), i);
       continue;
@@ -564,6 +565,8 @@ bool ElfReader::CheckProgramHeaderAlignment() {
       min_align_ = std::min(min_align_, static_cast<size_t>(phdr->p_align));
     }
   }
+
+  if (kPageSize == 16 * 1024) FixMinAlignFor16KiB();
 
   return true;
 }
@@ -984,8 +987,8 @@ bool ElfReader::LoadSegments() {
     return false;
   }
 
-  if (!Setup16KiBAppCompat()) {
-    DL_ERR("\"%s\" failed to setup 16KiB App Compat", name_.c_str());
+  if (std::string error; !Setup16KiBAppCompat(&error)) {
+    DL_ERR_AND_LOG("%s", error.c_str());
     return false;
   }
 
@@ -1225,35 +1228,42 @@ void name_memtag_globals_segments(const ElfW(Phdr) * phdr_table, size_t phdr_cou
     // VMA_ANON_NAME to be copied into the kernel), we can get rid of the storage here.
     // For now, that is not the case:
     // https://source.android.com/docs/core/architecture/kernel/android-common#compatibility-matrix
-    constexpr int kVmaNameLimit = 80;
     std::string& vma_name = vma_names->emplace_back(kVmaNameLimit, '\0');
-    int full_vma_length =
-        async_safe_format_buffer(vma_name.data(), kVmaNameLimit, "mt:%s+%" PRIxPTR, soname,
-                                 page_start(phdr->p_vaddr)) +
-        /* include the null terminator */ 1;
-    // There's an upper limit of 80 characters, including the null terminator, in the anonymous VMA
-    // name. If we run over that limit, we end up truncating the segment offset and parts of the
-    // DSO's name, starting on the right hand side of the basename. Because the basename is the most
-    // important thing, chop off the soname from the left hand side first.
-    //
-    // Example (with '#' as the null terminator):
-    //   - "mt:/data/nativetest64/bionic-unit-tests/bionic-loader-test-libs/libdlext_test.so+e000#"
-    //     is a `full_vma_length` == 86.
-    //
-    // We need to left-truncate (86 - 80) 6 characters from the soname, plus the
-    // `vma_truncation_prefix`, so 9 characters total.
-    if (full_vma_length > kVmaNameLimit) {
-      const char vma_truncation_prefix[] = "...";
-      int soname_truncated_bytes =
-          full_vma_length - kVmaNameLimit + sizeof(vma_truncation_prefix) - 1;
-      async_safe_format_buffer(vma_name.data(), kVmaNameLimit, "mt:%s%s+%" PRIxPTR,
-                               vma_truncation_prefix, soname + soname_truncated_bytes,
-                               page_start(phdr->p_vaddr));
-    }
+    // 18 characters are enough for the '+' prefix, 16 hex digits, and the null terminator.
+    char suffix_buffer[18] = {};
+    async_safe_format_buffer(suffix_buffer, sizeof(suffix_buffer), "+%" PRIxPTR,
+                             page_start(phdr->p_vaddr));
+    format_left_truncated_vma_anon_name(vma_name.data(), vma_name.size(), "mt:", soname,
+                                        suffix_buffer);
     if (prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, reinterpret_cast<void*>(seg_page_start),
               seg_page_aligned_size, vma_name.data()) != 0) {
       DL_WARN("Failed to rename memtag global segment: %m");
     }
+  }
+}
+
+/* There's an upper limit of 80 characters, including the null terminator, on the anonymous VMA
+ * name. This limit is easily exceeded when setting the mapping's name to a path. To stay within the
+ * character limit, we must truncate the name to fit into 80 bytes. Since the most important part of
+ * a path is the basename, we start truncating from the left side.
+ *
+ * Example (with prefix = "mt:", suffix = "+e000", and '#' as the null terminator):
+ *   - "mt:/data/nativetest64/bionic-unit-tests/bionic-loader-test-libs/libdlext_test.so+e000#"
+ * This mapping name would have a length of 86, so we left-truncate (86 - 80 + 3) 9 characters from
+ * the path in order to add "..." to the front and fit into the 80 character limit:
+ *   - "mt:...ivetest64/bionic-unit-tests/bionic-loader-test-libs/libdlext_test.so+e000#"
+ */
+void format_left_truncated_vma_anon_name(char* buffer, size_t buffer_size, const char* prefix,
+                                         const char* name, const char* suffix) {
+  size_t full_vma_name_length =
+      async_safe_format_buffer(buffer, buffer_size, "%s%s%s", prefix, name, suffix) +
+      /* null terminator */ 1;
+  if (full_vma_name_length > buffer_size) {
+    const char* truncation_prefix = "...";
+    size_t truncation_prefix_length = strlen(truncation_prefix);
+    size_t truncated_bytes = full_vma_name_length - buffer_size + truncation_prefix_length;
+    async_safe_format_buffer(buffer, buffer_size, "%s%s%s%s", prefix, truncation_prefix,
+                             name + truncated_bytes, suffix);
   }
 }
 

@@ -140,18 +140,25 @@ int dprintf(int __fd, const char* _Nonnull __fmt, ...) __printflike(2, 3);
 int vdprintf(int __fd, const char* _Nonnull __fmt, va_list __args) __printflike(2, 0);
 
 #if (defined(__STDC_VERSION__) && __STDC_VERSION__ < 201112L) || \
-    (defined(__cplusplus) && __cplusplus <= 201103L)
-char* _Nullable gets(char* _Nonnull __buf) __attribute__((__deprecated__("gets is unsafe, use fgets instead")));
+    (defined(__cplusplus) && __cplusplus < 201402L)
+/**
+ * gets() is an unsafe version of getline() for stdin.
+ *
+ * It was removed in C11 and C++14,
+ * and should not be used by new code.
+ */
+char* _Nullable gets(char* _Nonnull __buf) __attribute__((__deprecated__("gets() is unsafe, use getline() instead")));
 #endif
+
 int sprintf(char* __BIONIC_COMPLICATED_NULLNESS __s, const char* _Nonnull __fmt, ...)
     __printflike(2, 3) __warnattr_strict("sprintf is often misused; please use snprintf");
 int vsprintf(char* __BIONIC_COMPLICATED_NULLNESS __s, const char* _Nonnull __fmt, va_list __args)
     __printflike(2, 0) __warnattr_strict("vsprintf is often misused; please use vsnprintf");
 char* _Nullable tmpnam(char* _Nullable __s)
-    __warnattr("tmpnam is unsafe, use mkstemp or tmpfile instead");
+    __attribute__((__deprecated__("tmpnam is unsafe, use mkstemp or tmpfile instead")));
 #define P_tmpdir "/tmp/" /* deprecated */
 char* _Nullable tempnam(const char* _Nullable __dir, const char* _Nullable __prefix)
-    __warnattr("tempnam is unsafe, use mkstemp or tmpfile instead");
+    __attribute__((__deprecated__("tempnam is unsafe, use mkstemp or tmpfile instead")));
 
 /**
  * [rename(2)](https://man7.org/linux/man-pages/man2/rename.2.html) changes
@@ -169,25 +176,29 @@ int rename(const char* _Nonnull __old_path, const char* _Nonnull __new_path);
  */
 int renameat(int __old_dir_fd, const char* _Nonnull __old_path, int __new_dir_fd, const char* _Nonnull __new_path);
 
-#if defined(__USE_GNU)
-
 /**
  * Flag for [renameat2(2)](https://man7.org/linux/man-pages/man2/renameat2.2.html)
  * to fail if the new path already exists.
  */
+#if defined(__USE_GNU)
 #define RENAME_NOREPLACE (1<<0)
+#endif
 
 /**
  * Flag for [renameat2(2)](https://man7.org/linux/man-pages/man2/renameat2.2.html)
  * to atomically exchange the two paths.
  */
+#if defined(__USE_GNU)
 #define RENAME_EXCHANGE (1<<1)
+#endif
 
 /**
  * Flag for [renameat2(2)](https://man7.org/linux/man-pages/man2/renameat2.2.html)
  * to create a union/overlay filesystem object.
  */
+#if defined(__USE_GNU)
 #define RENAME_WHITEOUT (1<<2)
+#endif
 
 /**
  * [renameat2(2)](https://man7.org/linux/man-pages/man2/renameat2.2.html) changes
@@ -195,13 +206,11 @@ int renameat(int __old_dir_fd, const char* _Nonnull __old_path, int __new_dir_fd
  * with optional `RENAME_` flags.
  *
  * Returns 0 on success, and returns -1 and sets `errno` on failure.
+ *
+ * Available since API level 30 when compiling with `_GNU_SOURCE`.
  */
-
-#if __BIONIC_AVAILABILITY_GUARD(30)
+#if defined(__USE_GNU) && __BIONIC_AVAILABILITY_GUARD(30)
 int renameat2(int __old_dir_fd, const char* _Nonnull __old_path, int __new_dir_fd, const char* _Nonnull __new_path, unsigned __flags) __INTRODUCED_IN(30);
-#endif /* __BIONIC_AVAILABILITY_GUARD(30) */
-
-
 #endif
 
 int fseek(FILE* _Nonnull __fp, long __offset, int __whence);
@@ -212,56 +221,67 @@ __nodiscard long ftell(FILE* _Nonnull __fp);
 
 #if __BIONIC_AVAILABILITY_GUARD(24)
 int fgetpos(FILE* _Nonnull __fp, fpos_t* _Nonnull __pos) __RENAME(fgetpos64) __INTRODUCED_IN(24);
+#endif /* __BIONIC_AVAILABILITY_GUARD(24) */
+
+#if __BIONIC_AVAILABILITY_GUARD(24)
 int fsetpos(FILE* _Nonnull __fp, const fpos_t* _Nonnull __pos) __RENAME(fsetpos64) __INTRODUCED_IN(24);
+#endif /* __BIONIC_AVAILABILITY_GUARD(24) */
+
+#if __BIONIC_AVAILABILITY_GUARD(24)
 int fseeko(FILE* _Nonnull __fp, off_t __offset, int __whence) __RENAME(fseeko64) __INTRODUCED_IN(24);
+#endif /* __BIONIC_AVAILABILITY_GUARD(24) */
+
+#if __BIONIC_AVAILABILITY_GUARD(24)
 __nodiscard off_t ftello(FILE* _Nonnull __fp) __RENAME(ftello64) __INTRODUCED_IN(24);
 #endif /* __BIONIC_AVAILABILITY_GUARD(24) */
 
-#  if defined(__USE_BSD)
 /* If __read_fn and __write_fn are both nullptr, it will cause EINVAL */
-
-#if __BIONIC_AVAILABILITY_GUARD(24)
+#if defined(__USE_BSD) && __BIONIC_AVAILABILITY_GUARD(24)
 __nodiscard FILE* _Nullable funopen(const void* _Nullable __cookie,
               int (* __BIONIC_COMPLICATED_NULLNESS __read_fn)(void* _Nonnull, char* _Nonnull, int),
               int (* __BIONIC_COMPLICATED_NULLNESS __write_fn)(void* _Nonnull, const char* _Nonnull, int),
               fpos_t (* _Nullable __seek_fn)(void* _Nonnull, fpos_t, int),
               int (* _Nullable __close_fn)(void* _Nonnull)) __RENAME(funopen64) __INTRODUCED_IN(24);
-#endif /* __BIONIC_AVAILABILITY_GUARD(24) */
+#endif
 
-#  endif
 #else
 int fgetpos(FILE* _Nonnull __fp, fpos_t* _Nonnull __pos);
 int fsetpos(FILE* _Nonnull __fp, const fpos_t* _Nonnull __pos);
 int fseeko(FILE* _Nonnull __fp, off_t __offset, int __whence);
 __nodiscard off_t ftello(FILE* _Nonnull __fp);
-#  if defined(__USE_BSD)
+#if defined(__USE_BSD)
 /* If __read_fn and __write_fn are both nullptr, it will cause EINVAL */
 __nodiscard FILE* _Nullable funopen(const void* _Nullable __cookie,
               int (* __BIONIC_COMPLICATED_NULLNESS __read_fn)(void* _Nonnull, char* _Nonnull, int),
               int (* __BIONIC_COMPLICATED_NULLNESS __write_fn)(void* _Nonnull, const char* _Nonnull, int),
               fpos_t (* _Nullable __seek_fn)(void* _Nonnull, fpos_t, int),
               int (* _Nullable __close_fn)(void* _Nonnull));
-#  endif
+#endif
 #endif
 
 #if __BIONIC_AVAILABILITY_GUARD(24)
 int fgetpos64(FILE* _Nonnull __fp, fpos64_t* _Nonnull __pos) __INTRODUCED_IN(24);
+#endif /* __BIONIC_AVAILABILITY_GUARD(24) */
+
+#if __BIONIC_AVAILABILITY_GUARD(24)
 int fsetpos64(FILE* _Nonnull __fp, const fpos64_t* _Nonnull __pos) __INTRODUCED_IN(24);
+#endif /* __BIONIC_AVAILABILITY_GUARD(24) */
+
+#if __BIONIC_AVAILABILITY_GUARD(24)
 int fseeko64(FILE* _Nonnull __fp, off64_t __offset, int __whence) __INTRODUCED_IN(24);
+#endif /* __BIONIC_AVAILABILITY_GUARD(24) */
+
+#if __BIONIC_AVAILABILITY_GUARD(24)
 __nodiscard off64_t ftello64(FILE* _Nonnull __fp) __INTRODUCED_IN(24);
 #endif /* __BIONIC_AVAILABILITY_GUARD(24) */
 
-#if defined(__USE_BSD)
 /* If __read_fn and __write_fn are both nullptr, it will cause EINVAL */
-
-#if __BIONIC_AVAILABILITY_GUARD(24)
+#if defined(__USE_BSD) && __BIONIC_AVAILABILITY_GUARD(24)
 __nodiscard FILE* _Nullable funopen64(const void* _Nullable __cookie,
                 int (* __BIONIC_COMPLICATED_NULLNESS __read_fn)(void* _Nonnull, char* _Nonnull, int),
                 int (* __BIONIC_COMPLICATED_NULLNESS __write_fn)(void* _Nonnull, const char* _Nonnull, int),
                 fpos64_t (* _Nullable __seek_fn)(void* _Nonnull, fpos64_t, int),
                 int (* _Nullable __close_fn)(void* _Nonnull)) __INTRODUCED_IN(24);
-#endif /* __BIONIC_AVAILABILITY_GUARD(24) */
-
 #endif
 
 __nodiscard FILE* _Nullable fopen(const char* _Nonnull __path, const char* _Nonnull __mode);
@@ -308,14 +328,13 @@ __nodiscard int getchar_unlocked(void);
 int putc_unlocked(int __ch, FILE* _Nonnull __fp);
 int putchar_unlocked(int __ch);
 
-
 #if __BIONIC_AVAILABILITY_GUARD(23)
 __nodiscard FILE* _Nullable fmemopen(void* _Nullable __buf, size_t __size, const char* _Nonnull __mode) __INTRODUCED_IN(23);
+#endif /* __BIONIC_AVAILABILITY_GUARD(23) */
+#if __BIONIC_AVAILABILITY_GUARD(23)
 __nodiscard FILE* _Nullable open_memstream(char* _Nonnull * _Nonnull __ptr, size_t* _Nonnull __size_ptr) __INTRODUCED_IN(23);
 #endif /* __BIONIC_AVAILABILITY_GUARD(23) */
 
-
-#if defined(__USE_BSD) || defined(__BIONIC__) /* Historically bionic exposed these. */
 int  asprintf(char* _Nullable * _Nonnull __s_ptr, const char* _Nonnull __fmt, ...) __printflike(2, 3);
 char* _Nullable fgetln(FILE* _Nonnull __fp, size_t* _Nonnull __length_ptr);
 int fpurge(FILE* _Nonnull __fp);
@@ -325,10 +344,13 @@ int vasprintf(char* _Nullable * _Nonnull __s_ptr, const char* _Nonnull __fmt, va
 
 #if __BIONIC_AVAILABILITY_GUARD(23)
 void clearerr_unlocked(FILE* _Nonnull __fp) __INTRODUCED_IN(23);
+#endif /* __BIONIC_AVAILABILITY_GUARD(23) */
+#if __BIONIC_AVAILABILITY_GUARD(23)
 __nodiscard int feof_unlocked(FILE* _Nonnull __fp) __INTRODUCED_IN(23);
+#endif /* __BIONIC_AVAILABILITY_GUARD(23) */
+#if __BIONIC_AVAILABILITY_GUARD(23)
 __nodiscard int ferror_unlocked(FILE* _Nonnull __fp) __INTRODUCED_IN(23);
 #endif /* __BIONIC_AVAILABILITY_GUARD(23) */
-
 
 #if __BIONIC_AVAILABILITY_GUARD(24)
 __nodiscard int fileno_unlocked(FILE* _Nonnull __fp) __INTRODUCED_IN(24);
@@ -336,27 +358,33 @@ __nodiscard int fileno_unlocked(FILE* _Nonnull __fp) __INTRODUCED_IN(24);
 
 #define fropen(cookie, fn) funopen(cookie, fn, 0, 0, 0)
 #define fwopen(cookie, fn) funopen(cookie, 0, fn, 0, 0)
-#endif
 
-#if defined(__USE_BSD)
-
-#if __BIONIC_AVAILABILITY_GUARD(28)
+#if defined(__USE_BSD) && __BIONIC_AVAILABILITY_GUARD(28)
 int fflush_unlocked(FILE* _Nullable __fp) __INTRODUCED_IN(28);
-__nodiscard int fgetc_unlocked(FILE* _Nonnull __fp) __INTRODUCED_IN(28);
-int fputc_unlocked(int __ch, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
-size_t fread_unlocked(void* _Nonnull __buf, size_t __size, size_t __count, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
-size_t fwrite_unlocked(const void* _Nonnull __buf, size_t __size, size_t __count, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
-#endif /* __BIONIC_AVAILABILITY_GUARD(28) */
-
 #endif
 
-#if defined(__USE_GNU)
+#if defined(__USE_BSD) && __BIONIC_AVAILABILITY_GUARD(28)
+__nodiscard int fgetc_unlocked(FILE* _Nonnull __fp) __INTRODUCED_IN(28);
+#endif
 
-#if __BIONIC_AVAILABILITY_GUARD(28)
+#if defined(__USE_BSD) && __BIONIC_AVAILABILITY_GUARD(28)
+int fputc_unlocked(int __ch, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
+#endif
+
+#if defined(__USE_BSD) && __BIONIC_AVAILABILITY_GUARD(28)
+size_t fread_unlocked(void* _Nonnull __buf, size_t __size, size_t __count, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
+#endif
+
+#if defined(__USE_BSD) && __BIONIC_AVAILABILITY_GUARD(28)
+size_t fwrite_unlocked(const void* _Nonnull __buf, size_t __size, size_t __count, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
+#endif
+
+#if defined(__USE_GNU) && __BIONIC_AVAILABILITY_GUARD(28)
 int fputs_unlocked(const char* _Nonnull __s, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
-char* _Nullable fgets_unlocked(char* _Nonnull __buf, int __size, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
-#endif /* __BIONIC_AVAILABILITY_GUARD(28) */
+#endif
 
+#if defined(__USE_GNU) && __BIONIC_AVAILABILITY_GUARD(28)
+char* _Nullable fgets_unlocked(char* _Nonnull __buf, int __size, FILE* _Nonnull __fp) __INTRODUCED_IN(28);
 #endif
 
 #if defined(__BIONIC_INCLUDE_FORTIFY_HEADERS)

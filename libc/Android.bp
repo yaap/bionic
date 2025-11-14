@@ -1,5 +1,6 @@
 package {
     default_applicable_licenses: ["bionic_libc_license"],
+    default_team: "trendy_team_native_tools_libraries",
 }
 
 license {
@@ -379,14 +380,11 @@ cc_library_static {
         "upstream-freebsd/lib/libc/stdlib/hcreate_r.c",
         "upstream-freebsd/lib/libc/stdlib/hdestroy_r.c",
         "upstream-freebsd/lib/libc/stdlib/hsearch_r.c",
-        "upstream-freebsd/lib/libc/stdlib/qsort.c",
-        "upstream-freebsd/lib/libc/stdlib/qsort_r.c",
         "upstream-freebsd/lib/libc/stdlib/quick_exit.c",
         "upstream-freebsd/lib/libc/string/wcpcpy.c",
         "upstream-freebsd/lib/libc/string/wcpncpy.c",
         "upstream-freebsd/lib/libc/string/wcscasecmp.c",
         "upstream-freebsd/lib/libc/string/wcscat.c",
-        "upstream-freebsd/lib/libc/string/wcschr.c",
         "upstream-freebsd/lib/libc/string/wcscmp.c",
         "upstream-freebsd/lib/libc/string/wcscpy.c",
         "upstream-freebsd/lib/libc/string/wcscspn.c",
@@ -455,8 +453,6 @@ cc_library_static {
     srcs: [
         "upstream-netbsd/common/lib/libc/stdlib/random.c",
         "upstream-netbsd/lib/libc/gen/nice.c",
-        "upstream-netbsd/lib/libc/gen/psignal.c",
-        "upstream-netbsd/lib/libc/gen/utime.c",
         "upstream-netbsd/lib/libc/inet/nsap_addr.c",
         "upstream-netbsd/lib/libc/regex/regcomp.c",
         "upstream-netbsd/lib/libc/regex/regerror.c",
@@ -567,20 +563,9 @@ cc_library_static {
         "upstream-openbsd/lib/libc/stdio/vswscanf.c",
         "upstream-openbsd/lib/libc/stdio/wbuf.c",
         "upstream-openbsd/lib/libc/stdio/wsetup.c",
-        "upstream-openbsd/lib/libc/stdlib/abs.c",
-        "upstream-openbsd/lib/libc/stdlib/div.c",
         "upstream-openbsd/lib/libc/stdlib/getenv.c",
         "upstream-openbsd/lib/libc/stdlib/getsubopt.c",
-        "upstream-openbsd/lib/libc/stdlib/insque.c",
-        "upstream-openbsd/lib/libc/stdlib/imaxabs.c",
-        "upstream-openbsd/lib/libc/stdlib/imaxdiv.c",
-        "upstream-openbsd/lib/libc/stdlib/labs.c",
-        "upstream-openbsd/lib/libc/stdlib/ldiv.c",
-        "upstream-openbsd/lib/libc/stdlib/llabs.c",
-        "upstream-openbsd/lib/libc/stdlib/lldiv.c",
-        "upstream-openbsd/lib/libc/stdlib/lsearch.c",
         "upstream-openbsd/lib/libc/stdlib/recallocarray.c",
-        "upstream-openbsd/lib/libc/stdlib/remque.c",
         "upstream-openbsd/lib/libc/stdlib/setenv.c",
         "upstream-openbsd/lib/libc/stdlib/tfind.c",
         "upstream-openbsd/lib/libc/stdlib/tsearch.c",
@@ -1039,6 +1024,7 @@ cc_library_static {
         "bionic/umount.cpp",
         "bionic/unlink.cpp",
         "bionic/usleep.cpp",
+        "bionic/utime.cpp",
         "bionic/utmp.cpp",
         "bionic/vdso.cpp",
         "bionic/wait.cpp",
@@ -1189,6 +1175,7 @@ cc_library_static {
                 "arch-x86_64/bionic/syscall.S",
                 "arch-x86_64/bionic/vfork.S",
 
+                "arch-x86_64/string/avx2-memmove-kbl.S",
                 "arch-x86_64/string/avx2-memset-kbl.S",
                 "arch-x86_64/string/sse2-memmove-slm.S",
                 "arch-x86_64/string/sse2-memset-slm.S",
@@ -1359,24 +1346,23 @@ cc_library_static {
 
 // ========================================================
 // libc_static_dispatch.a/libc_dynamic_dispatch.a --- string/memory "ifuncs"
-// (Actually ifuncs for libc.so, but a home-grown alternative for libc.a.)
 // ========================================================
 
 cc_defaults {
-    name: "libc_dispatch_defaults",
+    name: "libc_ifunc_defaults",
     defaults: ["libc_defaults"],
     arch: {
-        x86_64: {
-            srcs: ["arch-x86_64/dynamic_function_dispatch.cpp"],
-        },
-        x86: {
-            srcs: ["arch-x86/dynamic_function_dispatch.cpp"],
-        },
         arm: {
-            srcs: ["arch-arm/dynamic_function_dispatch.cpp"],
+            srcs: ["arch-arm/ifuncs.cpp"],
         },
         arm64: {
-            srcs: ["arch-arm64/dynamic_function_dispatch.cpp"],
+            srcs: ["arch-arm64/ifuncs.cpp"],
+        },
+        x86: {
+            srcs: ["arch-x86/ifuncs.cpp"],
+        },
+        x86_64: {
+            srcs: ["arch-x86_64/ifuncs.cpp"],
         },
     },
     // Prevent the compiler from inserting calls to libc/taking the address of
@@ -1391,7 +1377,7 @@ cc_defaults {
 
 cc_library_static {
     name: "libc_static_dispatch",
-    defaults: ["libc_dispatch_defaults"],
+    defaults: ["libc_ifunc_defaults"],
     cflags: [
         "-DBIONIC_STATIC_DISPATCH",
     ],
@@ -1399,7 +1385,7 @@ cc_library_static {
 
 cc_library_static {
     name: "libc_dynamic_dispatch",
-    defaults: ["libc_dispatch_defaults"],
+    defaults: ["libc_ifunc_defaults"],
     cflags: [
         "-DBIONIC_DYNAMIC_DISPATCH",
     ],
@@ -1630,6 +1616,7 @@ cc_library {
         export_headers_as_system: true,
         export_llndk_headers: ["libc_headers"],
     },
+    afdo: true,
     lto_Instr100: true,
 }
 
@@ -1712,7 +1699,6 @@ cc_library_headers {
         "//art:__subpackages__",
         "//bionic:__subpackages__",
         "//frameworks:__subpackages__",
-        "//device/generic/goldfish-opengl:__subpackages__",
         "//external/gwp_asan:__subpackages__",
         "//external/perfetto:__subpackages__",
         "//external/scudo:__subpackages__",
@@ -1972,7 +1958,7 @@ cc_defaults {
         "//apex_available:anyapex",
     ],
     // Generate NDK variants of the CRT objects for every supported API level.
-    min_sdk_version: "16",
+    min_sdk_version: "21",
     stl: "none",
     crt: true,
     cflags: [
@@ -1988,6 +1974,11 @@ cc_defaults {
 cc_defaults {
     name: "crt_defaults",
     defaults: ["crt_and_memtag_defaults"],
+    header_libs: ["libc_headers"],
+    local_include_dirs: [
+        "bionic", // crtbegin includes bionic/libc_init_common.h
+        "private", // crtbrand depends on private/bionic_asm_note.h
+    ],
     system_shared_libs: [],
 }
 
@@ -1999,9 +1990,7 @@ cc_defaults {
 
 cc_object {
     name: "crtbrand",
-    local_include_dirs: [
-        "private", // crtbrand.S depends on private/bionic_asm_note.h
-    ],
+    defaults: ["crt_so_defaults"],
     // crtbrand.S needs to know the platform SDK version.
     product_variables: {
         platform_sdk_version: {
@@ -2009,18 +1998,14 @@ cc_object {
         },
     },
     srcs: ["arch-common/bionic/crtbrand.S"],
-
-    defaults: ["crt_so_defaults"],
     // crtbrand is an intermediate artifact, not a final CRT object.
     exclude_from_ndk_sysroot: true,
 }
 
 cc_object {
     name: "crtbegin_so",
-    local_include_dirs: ["include"],
-    srcs: ["arch-common/bionic/crtbegin_so.c"],
-
     defaults: ["crt_so_defaults"],
+    srcs: ["arch-common/bionic/crtbegin_so.c"],
     objs: [
         "crtbrand",
     ],
@@ -2028,40 +2013,25 @@ cc_object {
 
 cc_object {
     name: "crtend_so",
-    local_include_dirs: [
-        "private", // crtend_so.S depends on private/bionic_asm_arm64.h
-    ],
-    srcs: ["arch-common/bionic/crtend_so.S"],
-
     defaults: ["crt_so_defaults"],
+    srcs: ["arch-common/bionic/crtend_so.S"],
 }
 
 cc_object {
     name: "crtbegin_static",
-
-    local_include_dirs: [
-        "include",
-        "bionic", // crtbegin.c includes bionic/libc_init_common.h
-    ],
-
+    defaults: ["crt_defaults"],
     cflags: ["-DCRTBEGIN_STATIC"],
-
     srcs: ["arch-common/bionic/crtbegin.c"],
     objs: [
         "crtbrand",
     ],
-    defaults: ["crt_defaults"],
     // When using libc.a, we're using the latest library regardless of target API level.
     min_sdk_version: "current",
 }
 
 cc_object {
     name: "crtbegin_dynamic",
-
-    local_include_dirs: [
-        "include",
-        "bionic", // crtbegin.c includes bionic/libc_init_common.h
-    ],
+    defaults: ["crt_defaults"],
     srcs: ["arch-common/bionic/crtbegin.c"],
     objs: [
         "crtbrand",
@@ -2074,53 +2044,42 @@ cc_object {
             ],
         },
     },
-    defaults: ["crt_defaults"],
 }
 
 cc_object {
     // We rename crtend.o to crtend_android.o to avoid a
     // name clash between gcc and bionic.
     name: "crtend_android",
-    local_include_dirs: [
-        "private", // crtend.S depends on private/bionic_asm_arm64.h
-    ],
-    srcs: ["arch-common/bionic/crtend.S"],
-
     defaults: ["crt_defaults"],
+    srcs: ["arch-common/bionic/crtend.S"],
 }
 
 cc_object {
     name: "crt_pad_segment",
-    local_include_dirs: [
-        "private", // crt_pad_segment.S depends on private/bionic_asm_note.h
-    ],
-    srcs: ["arch-common/bionic/crt_pad_segment.S"],
-
     defaults: ["crt_defaults"],
+    srcs: ["arch-common/bionic/crt_pad_segment.S"],
 }
 
 cc_library_static {
     name: "note_memtag_heap_async",
+    defaults: ["crt_and_memtag_defaults"],
     arch: {
         arm64: {
             srcs: ["arch-arm64/bionic/note_memtag_heap_async.S"],
         },
     },
     sdk_version: "minimum",
-
-    defaults: ["crt_and_memtag_defaults"],
 }
 
 cc_library_static {
     name: "note_memtag_heap_sync",
+    defaults: ["crt_and_memtag_defaults"],
     arch: {
         arm64: {
             srcs: ["arch-arm64/bionic/note_memtag_heap_sync.S"],
         },
     },
     sdk_version: "minimum",
-
-    defaults: ["crt_and_memtag_defaults"],
 }
 
 // ========================================================
@@ -2144,6 +2103,9 @@ cc_library_static {
         "-Wall",
         "-Werror",
     ],
+    asflags: [
+        "-DBIONIC_RUST_BAREMETAL",
+    ],
     srcs: [
         "bionic/fortify.cpp",
         "bionic/strtol.cpp",
@@ -2162,9 +2124,11 @@ cc_library_static {
         },
         x86_64: {
             asflags: [
-                // Statically choose the SSE2 memset_generic as memset for
-                // baremetal, where we do not have the dynamic function
-                // dispatch machinery.
+                // Statically choose the SSE2 variants for baremetal,
+                // where we do not have the dynamic function dispatch
+                // machinery.
+                "-D__memcpy_chk_generic=__memcpy_chk",
+                "-Dmemmove_generic=memmove",
                 "-Dmemset_generic=memset",
             ],
             srcs: [
@@ -2840,6 +2804,7 @@ cc_genrule {
         "kernel/android/**/*.h",
         "execinfo/include/**/*.h",
         "b64/include/**/*.h",
+        "include/*.h",
 
         "NOTICE",
 
