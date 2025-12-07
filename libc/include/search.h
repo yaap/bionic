@@ -16,6 +16,8 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
+__BEGIN_DECLS
+
 /** See hsearch()/hsearch_r(). */
 typedef enum {
   FIND,
@@ -57,11 +59,9 @@ typedef enum {
 /** The hash table type for hcreate_r()/hdestroy_r()/hsearch_r(). */
 #if defined(__USE_BSD) || defined(__USE_GNU)
 struct hsearch_data {
-  struct __hsearch* _Nullable __hsearch;
+  void* _Nullable __opaque;
 };
 #endif
-
-__BEGIN_DECLS
 
 /**
  * [insque(3)](https://man7.org/linux/man-pages/man3/insque.3.html) inserts

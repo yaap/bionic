@@ -47,21 +47,19 @@
 #define tmp3		x9
 #define tmp3w		w9
 #define tmp4            x10
-#define SMALL_BUFFER_SIZE       96	// 96 KB, Size after which Non Temporal Store is beneficial
-#define	BUF_SIZE_FOR_ZVA	512	// 512 Bytes, Size after which DC ZVA is better than STP
 
 ENTRY(__memset_aarch64_nt)
-    mov	dst, dstin		/* Preserve return value.  */
-    and	A_lw, val, #255
-    orr	A_lw, A_lw, A_lw, lsl #8
-    orr	A_lw, A_lw, A_lw, lsl #16
-    orr	A_l, A_l, A_l, lsl #32
+    mov    dst, dstin		/* Preserve return value.  */
+    and    A_lw, val, #255
+    orr    A_lw, A_lw, A_lw, lsl #8
+    orr    A_lw, A_lw, A_lw, lsl #16
+    orr    A_l, A_l, A_l, lsl #32
 .Ltail_maybe_long:
-    cmp	count, #64
-    b.ge	.LisValZero		/* Case : Size greater than or equal to 64 bytes */
+    cmp    count, #64
+    b.ge   .LisValZero		/* Case : Size greater than or equal to 64 bytes */
 .Ltail_maybe_tiny:
-    cmp	count, #15
-    b.le	.Ltail15tiny		/* Case : Size is less than or equal to 15 bytes */
+    cmp    count, #15
+    b.le   .Ltail15tiny		/* Case : Size is less than or equal to 15 bytes */
 .Ltail63:				/* Size is between 16 to 63 bytes */
 
 /* Size 16 - 63. Do 4x16 bytes wrire. Based on the size, adjust the offsets to cover full range of 16 - 63 bytes */
@@ -84,7 +82,7 @@ ENTRY(__memset_aarch64_nt)
 .Ltail15tiny:				/* Size is less than or equal to 15 bytes */
 /* Size < 16. Do 4x4 bytes wrire. Based on the size, adjust the offsets to cover full range of 1-15 bytes */
     cmp    count, 4			/* Check for Size < 4 bytes */
-    b.lo   .tiny_4B			/* Case : Size is less than 4 bytes */
+    b.lt   .tiny_4B			/* Case : Size is less than 4 bytes */
     add    tmp4, dst, count
     lsr    tmp1, count, 3
     sub    tmp2, tmp4, tmp1, lsl 2
@@ -109,13 +107,12 @@ ENTRY(__memset_aarch64_nt)
     cbnz   A_lw, .Lnot_short
     /* For value = 0, if size is greater than BUF_SIZE_FOR_ZVA bytes,
      * use DC ZVA to set 0, else use STP instructions to set 0 	*/
-    cmp    count, BUF_SIZE_FOR_ZVA
+    cmp    count, #512			/* For size greater than 512 bytes, use DC ZVA, it is better than STP */
     b.gt   .Lzero_mem
 .Lnot_short:
-    mov    tmp4, #SMALL_BUFFER_SIZE
-    cmp    count, tmp4, LSL#10
-    /* Use non-temporal instruction if count > SMALL_BUFFER_SIZE */
-    bgt    L(not_short_nt)
+    cmp    count, #98304
+    /* Use non-temporal instruction if count > 98304 (96KB) . Non Temporal Store is beneficial is size is greater that 96 KB*/
+    bgt    .Lnot_short_nt
     neg    tmp2, dst
     ands   tmp2, tmp2, #15
     b.eq   2f
@@ -167,9 +164,9 @@ ENTRY(__memset_aarch64_nt)
     add    dst, dst, #64
     subs   count, count, #64
     b.ge   1b
-    tst    count, #0x3f
     add    dst, dst, #16
-    b.ne   .Ltail_maybe_tiny
+    add    count, count, #64			/* Count is negative now as it is pre decreament in 2: Revert it to have exact count before branching to Ltail_maybe_tiny */
+    cbnz   count, .Ltail_maybe_tiny
     ret
 .Lzero_mem:
     mov    A_l, #0

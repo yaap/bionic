@@ -159,6 +159,7 @@ enum {
   IFLA_GRO_IPV4_MAX_SIZE,
   IFLA_DPLL_PIN,
   IFLA_MAX_PACING_OFFLOAD_HORIZON,
+  IFLA_NETNS_IMMUTABLE,
   __IFLA_MAX
 };
 #define IFLA_MAX (__IFLA_MAX - 1)
@@ -583,6 +584,7 @@ enum {
   IFLA_GENEVE_TTL_INHERIT,
   IFLA_GENEVE_DF,
   IFLA_GENEVE_INNER_PROTO_INHERIT,
+  IFLA_GENEVE_PORT_RANGE,
   __IFLA_GENEVE_MAX
 };
 #define IFLA_GENEVE_MAX (__IFLA_GENEVE_MAX - 1)
@@ -592,6 +594,10 @@ enum ifla_geneve_df {
   GENEVE_DF_INHERIT,
   __GENEVE_DF_END,
   GENEVE_DF_MAX = __GENEVE_DF_END - 1,
+};
+struct ifla_geneve_port_range {
+  __be16 low;
+  __be16 high;
 };
 enum {
   IFLA_BAREUDP_UNSPEC,
@@ -989,4 +995,14 @@ enum {
   __IFLA_DSA_MAX,
 };
 #define IFLA_DSA_MAX (__IFLA_DSA_MAX - 1)
+enum ovpn_mode {
+  OVPN_MODE_P2P,
+  OVPN_MODE_MP,
+};
+enum {
+  IFLA_OVPN_UNSPEC,
+  IFLA_OVPN_MODE,
+  __IFLA_OVPN_MAX,
+};
+#define IFLA_OVPN_MAX (__IFLA_OVPN_MAX - 1)
 #endif

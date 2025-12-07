@@ -16,7 +16,6 @@
 
 #include <gtest/gtest.h>
 
-#include "DoNotOptimize.h"
 #include "SignalUtils.h"
 #include "sme_utils.h"
 #include "utils.h"
@@ -40,6 +39,7 @@
 #include <android-base/file.h>
 #include <android-base/silent_death_test.h>
 #include <android-base/strings.h>
+#include <android-base/test_utils.h>
 
 #include "private/get_cpu_count_from_string.h"
 
@@ -505,7 +505,7 @@ static void AssertGetPidCorrect() {
   }
 }
 
-static void TestGetPidCachingWithFork(int (*fork_fn)(), void (*exit_fn)(int)) {
+static void TestGetPidWorksAfterFork(int (*fork_fn)(), void (*exit_fn)(int)) {
   pid_t parent_pid = getpid();
   ASSERT_EQ(syscall(__NR_getpid), parent_pid);
 
@@ -539,7 +539,7 @@ static void AssertGetTidCorrect() {
   }
 }
 
-static void TestGetTidCachingWithFork(int (*fork_fn)(), void (*exit_fn)(int)) {
+static void TestGetTidWorksAfterFork(int (*fork_fn)(), void (*exit_fn)(int)) {
   pid_t parent_tid = GetTidForTest();
   ASSERT_EQ(syscall(__NR_gettid), parent_tid);
 
@@ -559,28 +559,28 @@ static void TestGetTidCachingWithFork(int (*fork_fn)(), void (*exit_fn)(int)) {
   }
 }
 
-TEST(UNISTD_TEST, getpid_caching_and_fork) {
-  TestGetPidCachingWithFork(fork, exit);
+TEST(UNISTD_TEST, getpid_works_after_fork) {
+  TestGetPidWorksAfterFork(fork, exit);
 }
 
-TEST(UNISTD_TEST, gettid_caching_and_fork) {
-  TestGetTidCachingWithFork(fork, exit);
+TEST(UNISTD_TEST, gettid_works_after_fork) {
+  TestGetTidWorksAfterFork(fork, exit);
 }
 
-TEST(UNISTD_TEST, getpid_caching_and_vfork) {
-  TestGetPidCachingWithFork(vfork, _exit);
+TEST(UNISTD_TEST, getpid_works_after_vfork) {
+  TestGetPidWorksAfterFork(vfork, _exit);
 }
 
 static int CloneLikeFork() {
   return clone(nullptr, nullptr, SIGCHLD, nullptr);
 }
 
-TEST(UNISTD_TEST, getpid_caching_and_clone_process) {
-  TestGetPidCachingWithFork(CloneLikeFork, exit);
+TEST(UNISTD_TEST, getpid_works_after_clone_process) {
+  TestGetPidWorksAfterFork(CloneLikeFork, exit);
 }
 
-TEST(UNISTD_TEST, gettid_caching_and_clone_process) {
-  TestGetTidCachingWithFork(CloneLikeFork, exit);
+TEST(UNISTD_TEST, gettid_works_after_clone_process) {
+  TestGetTidWorksAfterFork(CloneLikeFork, exit);
 }
 
 static int CloneAndSetTid() {
@@ -603,8 +603,8 @@ static int CloneAndSetTid() {
   return rv;
 }
 
-TEST(UNISTD_TEST, gettid_caching_and_clone_process_settid) {
-  TestGetTidCachingWithFork(CloneAndSetTid, exit);
+TEST(UNISTD_TEST, gettid_works_after_clone_process_settid) {
+  TestGetTidWorksAfterFork(CloneAndSetTid, exit);
 }
 
 __attribute__((no_sanitize("hwaddress", "memtag")))
@@ -613,16 +613,16 @@ static int CloneStartRoutine(int (*start_routine)(void*)) {
   return clone(start_routine, &child_stack[1024], SIGCHLD, nullptr);
 }
 
-static int GetPidCachingCloneStartRoutine(void*) {
+static int GetPidWorksInCloneStartRoutine(void*) {
   AssertGetPidCorrect();
   return 123;
 }
 
-TEST(UNISTD_TEST, getpid_caching_and_clone) {
+TEST(UNISTD_TEST, getpid_works_after_clone) {
   pid_t parent_pid = getpid();
   ASSERT_EQ(syscall(__NR_getpid), parent_pid);
 
-  int clone_result = CloneStartRoutine(GetPidCachingCloneStartRoutine);
+  int clone_result = CloneStartRoutine(GetPidWorksInCloneStartRoutine);
   ASSERT_NE(clone_result, -1);
 
   ASSERT_EQ(parent_pid, getpid());
@@ -630,16 +630,16 @@ TEST(UNISTD_TEST, getpid_caching_and_clone) {
   AssertChildExited(clone_result, 123);
 }
 
-static int GetTidCachingCloneStartRoutine(void*) {
+static int GetTidWorksInCloneStartRoutine(void*) {
   AssertGetTidCorrect();
   return 123;
 }
 
-TEST(UNISTD_TEST, gettid_caching_and_clone) {
+TEST(UNISTD_TEST, gettid_works_after_clone) {
   pid_t parent_tid = GetTidForTest();
   ASSERT_EQ(syscall(__NR_gettid), parent_tid);
 
-  int clone_result = CloneStartRoutine(GetTidCachingCloneStartRoutine);
+  int clone_result = CloneStartRoutine(GetTidWorksInCloneStartRoutine);
   ASSERT_NE(clone_result, -1);
 
   ASSERT_EQ(parent_tid, GetTidForTest());
@@ -663,16 +663,16 @@ TEST(UNISTD_TEST, clone_fn_and_exit) {
   AssertChildExited(clone_result, 33);
 }
 
-static void* GetPidCachingPthreadStartRoutine(void*) {
+static void* GetPidWorksInPthreadStartRoutine(void*) {
   AssertGetPidCorrect();
   return nullptr;
 }
 
-TEST(UNISTD_TEST, getpid_caching_and_pthread_create) {
+TEST(UNISTD_TEST, getpid_works_after_pthread_create) {
   pid_t parent_pid = getpid();
 
   pthread_t t;
-  ASSERT_EQ(0, pthread_create(&t, nullptr, GetPidCachingPthreadStartRoutine, nullptr));
+  ASSERT_EQ(0, pthread_create(&t, nullptr, GetPidWorksInPthreadStartRoutine, nullptr));
 
   ASSERT_EQ(parent_pid, getpid());
 
@@ -681,17 +681,17 @@ TEST(UNISTD_TEST, getpid_caching_and_pthread_create) {
   ASSERT_EQ(nullptr, result);
 }
 
-static void* GetTidCachingPthreadStartRoutine(void*) {
+static void* GetTidWorksInPthreadStartRoutine(void*) {
   AssertGetTidCorrect();
   uint64_t tid = GetTidForTest();
   return reinterpret_cast<void*>(tid);
 }
 
-TEST(UNISTD_TEST, gettid_caching_and_pthread_create) {
+TEST(UNISTD_TEST, gettid_works_after_pthread_create) {
   pid_t parent_tid = GetTidForTest();
 
   pthread_t t;
-  ASSERT_EQ(0, pthread_create(&t, nullptr, GetTidCachingPthreadStartRoutine, &parent_tid));
+  ASSERT_EQ(0, pthread_create(&t, nullptr, GetTidWorksInPthreadStartRoutine, &parent_tid));
 
   ASSERT_EQ(parent_tid, GetTidForTest());
 
@@ -703,7 +703,7 @@ TEST(UNISTD_TEST, gettid_caching_and_pthread_create) {
 __attribute__((noinline)) static void HwasanVforkTestChild() {
   // Allocate a tagged region on stack and leave it there.
   char x[10000];
-  DoNotOptimize(x);
+  android::base::DoNotOptimize(x);
   _exit(0);
 }
 
@@ -712,7 +712,7 @@ __attribute__((noinline)) static void HwasanReadMemory(const char* p, size_t siz
   // tag in [p, p+size).
   char z;
   for (size_t i = 0; i < size; ++i) {
-    DoNotOptimize(z = p[i]);
+    android::base::DoNotOptimize(z = p[i]);
   }
 }
 
@@ -720,7 +720,7 @@ __attribute__((noinline, no_sanitize("hwaddress"))) static void HwasanVforkTestP
   // Allocate a region on stack, but don't tag it (see the function attribute).
   // This depends on unallocated stack space at current function entry being untagged.
   char x[10000];
-  DoNotOptimize(x);
+  android::base::DoNotOptimize(x);
   // Verify that contents of x[] are untagged.
   HwasanReadMemory(x, sizeof(x));
 }

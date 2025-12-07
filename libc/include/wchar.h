@@ -50,7 +50,27 @@ wint_t fgetwc(FILE* _Nonnull __fp);
 wchar_t* _Nullable fgetws(wchar_t* _Nonnull __buf, int __size, FILE* _Nonnull __fp);
 wint_t fputwc(wchar_t __wc, FILE* _Nonnull __fp);
 int fputws(const wchar_t* _Nonnull __s, FILE* _Nonnull __fp);
+
+/**
+ * [fwide(3)](https://www.man7.org/linux/man-pages/man3/fwide.3.html)
+ * gets/sets the orientation of a stream.
+ *
+ * Use a positive value to set wide character orientation,
+ * a negative value to set byte orientation,
+ * or 0 to leave the orientation unset if it hasn't already been set.
+ *
+ * ISO C says that byte operations "shall not" be applied to a wide character
+ * stream and vice versa, but Android -- and other BSD-derived stdio
+ * implementations -- do not enforce this.
+ * On Android orientation is largely meaningless, and only tells you whether
+ * the first operation on the stream was a byte or a wide character operation.
+ *
+ * Returns a positive value for a wide stream,
+ * a negative value for a byte stream,
+ * or 0 if the orientation has not yet been set.
+ */
 int fwide(FILE* _Nonnull __fp, int __mode);
+
 wint_t getwc(FILE* _Nonnull __fp);
 wint_t getwchar(void);
 int mbsinit(const mbstate_t* _Nullable __ps);
@@ -82,7 +102,6 @@ int wcscasecmp_l(const wchar_t* _Nonnull __lhs, const wchar_t* _Nonnull __rhs, l
 wchar_t* _Nonnull wcscat(wchar_t* _Nonnull __dst, const wchar_t* _Nonnull __src);
 wchar_t* _Nullable wcschr(const wchar_t * _Nonnull __s, wchar_t __wc);
 int wcscmp(const wchar_t* _Nonnull __lhs, const wchar_t* _Nonnull __rhs);
-int wcscoll(const wchar_t* _Nonnull __lhs, const wchar_t* _Nonnull __rhs);
 wchar_t* _Nonnull wcscpy(wchar_t* _Nonnull __dst, const wchar_t* _Nonnull __src);
 size_t wcscspn(const wchar_t* _Nonnull __s, const wchar_t* _Nonnull __accept);
 size_t wcsftime(wchar_t* _Nonnull __buf, size_t __n, const wchar_t* _Nullable __fmt, const struct tm* _Nonnull __tm);
@@ -121,7 +140,6 @@ unsigned long wcstoul(const wchar_t* _Nonnull __s, wchar_t* __BIONIC_COMPLICATED
 unsigned long wcstoul_l(const wchar_t* _Nonnull __s, wchar_t* __BIONIC_COMPLICATED_NULLNESS * _Nullable __end_ptr, int __base, locale_t _Nonnull __l) __RENAME(wcstoul);
 unsigned long long wcstoull(const wchar_t* _Nonnull __s, wchar_t* __BIONIC_COMPLICATED_NULLNESS * _Nullable __end_ptr, int __base);
 int wcswidth(const wchar_t* _Nonnull __s, size_t __n);
-size_t wcsxfrm(wchar_t* __BIONIC_COMPLICATED_NULLNESS __dst, const wchar_t* _Nonnull __src, size_t __n);
 int wcwidth(wchar_t __wc);
 wchar_t* _Nullable wmemchr(const wchar_t* _Nonnull __src, wchar_t __wc, size_t __n);
 int wmemcmp(const wchar_t* _Nullable __lhs, const wchar_t* _Nullable __rhs, size_t __n);
@@ -140,8 +158,15 @@ long long wcstoll_l(const wchar_t* _Nonnull __s, wchar_t* _Nullable * _Nullable 
 unsigned long long wcstoull_l(const wchar_t* _Nonnull __s, wchar_t* _Nullable * _Nullable __end_ptr, int __base, locale_t _Nonnull __l);
 long double wcstold_l(const wchar_t* _Nonnull __s, wchar_t* _Nullable * _Nullable __end_ptr, locale_t _Nonnull __l);
 
+/** Equivalent to wcscmp() on Android. */
+int wcscoll(const wchar_t* _Nonnull __lhs, const wchar_t* _Nonnull __rhs);
+/** Equivalent to wcscmp() on Android. */
 int wcscoll_l(const wchar_t* _Nonnull __lhs, const wchar_t* _Nonnull __rhs, locale_t _Nonnull __l) __attribute_pure__;
+/** Equivalent to wcslcpy() on Android. */
+size_t wcsxfrm(wchar_t* __BIONIC_COMPLICATED_NULLNESS __dst, const wchar_t* _Nonnull __src, size_t __n);
+/** Equivalent to wcslcpy() on Android. */
 size_t wcsxfrm_l(wchar_t* __BIONIC_COMPLICATED_NULLNESS __dst, const wchar_t* _Nonnull __src, size_t __n, locale_t _Nonnull __l);
+
 size_t wcslcat(wchar_t* _Nonnull __dst, const wchar_t* _Nonnull __src, size_t __n);
 size_t wcslcpy(wchar_t* _Nonnull __dst, const wchar_t* _Nonnull __src, size_t __n);
 
