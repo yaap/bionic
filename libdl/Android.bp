@@ -34,7 +34,12 @@ cc_library_static {
         "-Wextra",
         "-Wunused",
         "-Werror",
-    ],
+    ] + select(soong_config_variable("libdl", "needs_cfi_slowpath_return"), {
+        any @ value: [
+            "-DNEEDS_CFI_SLOWPATH_RETURN",
+        ],
+        default: [],
+    }),
 
     // For private/CFIShadow.h.
     include_dirs: ["bionic/libc"],
