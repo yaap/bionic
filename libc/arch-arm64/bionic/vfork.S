@@ -32,6 +32,19 @@
 #include <linux/sched.h>
 
 ENTRY_WEAK_FOR_NATIVE_BRIDGE(vfork)
+    // AAPCS64 defines SME ZA interface as private for vfork(), which means that ZA state on entry
+    // can be "dormant" or "off", while on return it can be unchanged or "off".
+    // https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst#za-interfaces
+    // Handling the dormant state would make the code unnecessary complex, so for simplicity turn
+    // ZA state off on entry which ensures that the state on return will be "off" as well.
+    str lr, [sp, #-16]!
+    .cfi_adjust_cfa_offset 16
+    .cfi_rel_offset lr, 0
+    bl __arm_za_disable
+    ldr lr, [sp], #16
+    .cfi_adjust_cfa_offset -16
+    .cfi_restore lr
+
     // x9 = __get_tls()[TLS_SLOT_THREAD_ID]
     mrs     x9, tpidr_el0
     ldr     x9, [x9, #(TLS_SLOT_THREAD_ID * 8)]
@@ -72,16 +85,15 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(vfork)
     mov     x8, __NR_clone
     svc     #0
 
-    cbz     x0, L(done)
-
-    // rc != 0: reset cached_pid_ and vforked_.
-    str     w10, [x9, #20]
-    cmn     x0, #(MAX_ERRNO + 1)
-    cneg    x0, x0, hi
-    b.hi    __set_errno_internal
-
-L(done):
+    // Are we the child? Return if so.
+    cbnz    x0, L(not_child)
     ret
+
+    // Not the child: restore the previous cached_pid_/vforked_ values
+    // and then report syscall success/failure as normal.
+L(not_child):
+    str     w10, [x9, #20]
+    DO_SYSCALL_RETURN
 END(vfork)
 
 NOTE_GNU_PROPERTY()

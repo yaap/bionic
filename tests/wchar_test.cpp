@@ -27,7 +27,11 @@
 
 #include <limits>
 
+#include "buffer_tests.h"
 #include "utils.h"
+
+constexpr static auto KB = 1024;
+constexpr static auto LARGE = 64 * KB;
 
 #define NUM_WCHARS(num_bytes) ((num_bytes)/sizeof(wchar_t))
 
@@ -142,8 +146,7 @@ TEST(wchar, wctomb_wcrtomb) {
   EXPECT_EQ('\xad', bytes[2]);
   EXPECT_EQ('\xa2', bytes[3]);
   // Invalid code point.
-  EXPECT_EQ(static_cast<size_t>(-1), wcrtomb(bytes, 0xffffffff, nullptr));
-  EXPECT_ERRNO(EILSEQ);
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcrtomb(bytes, 0xffffffff, nullptr));
 }
 
 TEST(wchar, wcrtomb_start_state) {
@@ -155,8 +158,7 @@ TEST(wchar, wcrtomb_start_state) {
 
   // Any non-initial state is invalid when calling wcrtomb.
   EXPECT_EQ(static_cast<size_t>(-2), mbrtowc(nullptr, "\xc2", 1, &ps));
-  EXPECT_EQ(static_cast<size_t>(-1), wcrtomb(out, 0x00a2, &ps));
-  EXPECT_ERRNO(EILSEQ);
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcrtomb(out, 0x00a2, &ps));
 
   // If the first argument to wcrtomb is NULL or the second is L'\0' the shift
   // state should be reset.
@@ -195,25 +197,17 @@ TEST(wchar, wcstombs_wcrtombs) {
   EXPECT_EQ(&chars[0], src);
 
   // An unrepresentable char just returns an error from wcstombs...
-  errno = 0;
-  EXPECT_EQ(static_cast<size_t>(-1), wcstombs(nullptr, bad_chars, 0));
-  EXPECT_ERRNO(EILSEQ);
-  errno = 0;
-  EXPECT_EQ(static_cast<size_t>(-1), wcstombs(nullptr, bad_chars, 256));
-  EXPECT_ERRNO(EILSEQ);
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcstombs(nullptr, bad_chars, 0));
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcstombs(nullptr, bad_chars, 256));
 
   // And wcsrtombs doesn't tell us where it got stuck because we didn't ask it
   // to actually convert anything...
-  errno = 0;
   src = bad_chars;
-  EXPECT_EQ(static_cast<size_t>(-1), wcsrtombs(nullptr, &src, 0, nullptr));
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcsrtombs(nullptr, &src, 0, nullptr));
   EXPECT_EQ(&bad_chars[0], src);
-  EXPECT_ERRNO(EILSEQ);
-  errno = 0;
   src = bad_chars;
-  EXPECT_EQ(static_cast<size_t>(-1), wcsrtombs(nullptr, &src, 256, nullptr));
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcsrtombs(nullptr, &src, 256, nullptr));
   EXPECT_EQ(&bad_chars[0], src);
-  EXPECT_ERRNO(EILSEQ);
 
   // Okay, now let's test actually converting something...
   memset(bytes, 'x', sizeof(bytes));
@@ -228,10 +222,8 @@ TEST(wchar, wcstombs_wcrtombs) {
   memset(bytes, 'x', sizeof(bytes));
   EXPECT_EQ(5U, wcstombs(bytes, chars, 6));
   EXPECT_STREQ("hello", bytes);
-  errno = 0;
   memset(bytes, 'x', sizeof(bytes));
-  EXPECT_EQ(static_cast<size_t>(-1), wcstombs(bytes, bad_chars, 256));
-  EXPECT_ERRNO(EILSEQ);
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcstombs(bytes, bad_chars, 256));
   bytes[3] = 0;
   EXPECT_STREQ("hix", bytes);
 
@@ -240,13 +232,11 @@ TEST(wchar, wcstombs_wcrtombs) {
   src = chars;
   EXPECT_EQ(0U, wcsrtombs(bytes, &src, 0, nullptr));
   EXPECT_EQ(&chars[0], src); // No input consumed.
-  EXPECT_ERRNO(EILSEQ);
 
   memset(bytes, 'x', sizeof(bytes));
   src = chars;
   EXPECT_EQ(4U, wcsrtombs(bytes, &src, 4, nullptr));
   EXPECT_EQ(&chars[4], src); // Some input consumed.
-  EXPECT_ERRNO(EILSEQ);
   bytes[5] = 0;
   EXPECT_STREQ("hellx", bytes);
 
@@ -254,21 +244,18 @@ TEST(wchar, wcstombs_wcrtombs) {
   src = chars;
   EXPECT_EQ(5U, wcsrtombs(bytes, &src, 256, nullptr));
   EXPECT_EQ(nullptr, src); // All input consumed!
-  EXPECT_ERRNO(EILSEQ);
   EXPECT_STREQ("hello", bytes);
 
   memset(bytes, 'x', sizeof(bytes));
   src = chars;
   EXPECT_EQ(5U, wcsrtombs(bytes, &src, 6, nullptr));
   EXPECT_EQ(nullptr, src); // All input consumed.
-  EXPECT_ERRNO(EILSEQ);
   EXPECT_STREQ("hello", bytes);
 
   memset(bytes, 'x', sizeof(bytes));
   src = bad_chars;
-  EXPECT_EQ(static_cast<size_t>(-1), wcsrtombs(bytes, &src, 256, nullptr));
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcsrtombs(bytes, &src, 256, nullptr));
   EXPECT_EQ(&bad_chars[2], src);
-  EXPECT_ERRNO(EILSEQ);
   bytes[3] = 0;
   EXPECT_STREQ("hix", bytes);
 
@@ -276,8 +263,7 @@ TEST(wchar, wcstombs_wcrtombs) {
   mbstate_t ps = {};
   src = chars;
   ASSERT_EQ(static_cast<size_t>(-2), mbrtowc(nullptr, "\xc2", 1, &ps));
-  EXPECT_EQ(static_cast<size_t>(-1), wcsrtombs(nullptr, &src, 0, &ps));
-  EXPECT_ERRNO(EILSEQ);
+  EXPECT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), wcsrtombs(nullptr, &src, 0, &ps));
 }
 
 TEST(wchar, limits) {
@@ -396,18 +382,18 @@ TEST(wchar, mbrtowc) {
   EXPECT_EQ(static_cast<wchar_t>(0x24b62), out[0]);
 #if defined(__BIONIC__) // glibc allows this.
   // Illegal 5-byte UTF-8.
-  EXPECT_EQ(static_cast<size_t>(-1), mbrtowc(out,
-                                             "\xf8\xa1\xa2\xa3\xa4"
-                                             "f",
-                                             6, nullptr));
-  EXPECT_ERRNO(EILSEQ);
+  EXPECT_ERRNO_FAILURE(EILSEQ,
+                       static_cast<size_t>(-1), mbrtowc(out,
+                       "\xf8\xa1\xa2\xa3\xa4"
+                       "f",
+                       6, nullptr));
 #endif
   // Illegal over-long sequence.
-  EXPECT_EQ(static_cast<size_t>(-1), mbrtowc(out,
-                                             "\xf0\x82\x82\xac"
-                                             "ef",
-                                             6, nullptr));
-  EXPECT_ERRNO(EILSEQ);
+  EXPECT_ERRNO_FAILURE(EILSEQ,
+                       static_cast<size_t>(-1), mbrtowc(out,
+                       "\xf0\x82\x82\xac"
+                       "ef",
+                       6, nullptr));
 }
 
 TEST(wchar, mbrtowc_valid_non_characters) {
@@ -463,8 +449,7 @@ static void test_mbrtowc_incomplete(mbstate_t* ps) {
 
   // Invalid 2-byte
   ASSERT_EQ(static_cast<size_t>(-2), mbrtowc(&out, "\xc2", 1, ps));
-  ASSERT_EQ(static_cast<size_t>(-1), mbrtowc(&out, "\x20" "cdef", 5, ps));
-  ASSERT_ERRNO(EILSEQ);
+  ASSERT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), mbrtowc(&out, "\x20" "cdef", 5, ps));
 }
 
 TEST(wchar, mbrtowc_incomplete) {
@@ -500,13 +485,11 @@ static void test_mbsrtowcs(mbstate_t* ps) {
   ASSERT_EQ(nullptr, valid);
 
   const char* invalid = INVALID;
-  ASSERT_EQ(static_cast<size_t>(-1), mbsrtowcs(out, &invalid, 4, ps));
-  EXPECT_ERRNO(EILSEQ);
+  ASSERT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), mbsrtowcs(out, &invalid, 4, ps));
   ASSERT_EQ('\xc2', *invalid);
 
   const char* incomplete = INCOMPLETE;
-  ASSERT_EQ(static_cast<size_t>(-1), mbsrtowcs(out, &incomplete, 2, ps));
-  EXPECT_ERRNO(EILSEQ);
+  ASSERT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), mbsrtowcs(out, &incomplete, 2, ps));
   ASSERT_EQ('\xc2', *incomplete);
 
   // If dst is null, *src shouldn't be updated.
@@ -534,8 +517,7 @@ TEST(wchar, mbsrtowcs) {
   const char* invalid = "\x20";
   wchar_t out;
   ASSERT_EQ(static_cast<size_t>(-2), mbrtowc(&out, "\xc2", 1, &ps));
-  ASSERT_EQ(static_cast<size_t>(-1), mbsrtowcs(&out, &invalid, 1, &ps));
-  EXPECT_ERRNO(EILSEQ);
+  ASSERT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), mbsrtowcs(&out, &invalid, 1, &ps));
   ASSERT_EQ('\x20', *invalid);
 }
 
@@ -663,14 +645,10 @@ TEST(wchar, mbsnrtowcs) {
   memset(dst, 0, sizeof(dst));
   const char* incomplete = "\xc2"; // Incomplete UTF-8 sequence.
   src = incomplete;
-  errno = 0;
-  ASSERT_EQ(static_cast<size_t>(-1), mbsnrtowcs(dst, &src, SIZE_MAX, 3, nullptr));
-  ASSERT_ERRNO(EILSEQ);
+  ASSERT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), mbsnrtowcs(dst, &src, SIZE_MAX, 3, nullptr));
 
   src = incomplete;
-  errno = 0;
-  ASSERT_EQ(static_cast<size_t>(-1), mbsnrtowcs(nullptr, &src, SIZE_MAX, 3, nullptr));
-  ASSERT_ERRNO(EILSEQ);
+  ASSERT_ERRNO_FAILURE(EILSEQ, static_cast<size_t>(-1), mbsnrtowcs(nullptr, &src, SIZE_MAX, 3, nullptr));
 }
 
 TEST(wchar, wcsftime__wcsftime_l) {
@@ -807,21 +785,17 @@ TEST(wchar, open_wmemstream) {
   free(p);
 }
 
-TEST(stdio, open_wmemstream_EINVAL) {
+TEST(wchar, open_wmemstream_EINVAL) {
 #if defined(__BIONIC__)
   wchar_t* p;
   size_t size;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnonnull"
   // Invalid buffer.
-  errno = 0;
-  ASSERT_EQ(nullptr, open_wmemstream(nullptr, &size));
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, open_wmemstream(nullptr, &size));
 
   // Invalid size.
-  errno = 0;
-  ASSERT_EQ(nullptr, open_wmemstream(&p, nullptr));
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, open_wmemstream(&p, nullptr));
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "This test is bionic-specific";
@@ -1177,6 +1151,45 @@ TEST(wchar, wcwidth_hangeul_compatibility_jamo) {
   EXPECT_EQ(2, wcwidth(L'ㅅ'));
 }
 
+TEST(wchar, wcslen) {
+  constexpr size_t array_len = 256 / sizeof(wchar_t);
+  wchar_t wide_str[array_len];
+  for (size_t i = 0; i < array_len; ++i) {
+    wide_str[i] = i + 1;
+  }
+
+  for (size_t i = 0; i < array_len - 1; ++i) {
+    const wchar_t old = wide_str[i];
+    wide_str[i] = 0;
+    EXPECT_EQ(wcslen(wide_str), i);
+    wide_str[i] = old;
+  }
+}
+
+static void DoWcslenTest(uint8_t* byte_buf, size_t byte_len) {
+  // NOTE: This is intentionally left potentially-misaligned, because
+  // historically bionic (and other BSD-derived libcs including iOS) allowed
+  // it, though glibc does not.
+  size_t len = byte_len / sizeof(wchar_t);
+  if (len >= 1) {
+    size_t pre_nul_len = len * sizeof(wchar_t) - sizeof(wchar_t);
+    memset(byte_buf, (32 + (byte_len % 96)), pre_nul_len);
+    // Because this is unaligned, use `memset` to set the 0, rather than
+    // casting to `wchar_t *` and doing an unaligned store. The `memset` is
+    // preferred by the standard & sanitizers.
+    memset(byte_buf + pre_nul_len, 0, sizeof(wchar_t));
+    EXPECT_EQ(len - 1, wcslen(reinterpret_cast<const wchar_t*>(byte_buf)));
+  }
+}
+
+TEST(wchar, wcslen_align) {
+  RunSingleBufferAlignTest(LARGE, DoWcslenTest);
+}
+
+TEST(wchar, wcslen_overread) {
+  RunSingleBufferOverreadTest(DoWcslenTest);
+}
+
 TEST(wchar, wcswidth) {
   EXPECT_EQ(2, wcswidth(L"abc", 2));
   EXPECT_EQ(2, wcswidth(L"ab\t", 2));
@@ -1277,6 +1290,30 @@ TEST(wchar, wmemchr) {
   ASSERT_EQ(nullptr, wmemchr(s, L'a', 13));
 }
 
+static void DoWmemchrTest(uint8_t* byte_buf, size_t byte_len) {
+  // Much like DoWcslenTest, this intentionally supports unaligned buffers, for
+  // compatibility with other libcs.
+  const size_t len = byte_len / sizeof(wchar_t);
+  if (!len) {
+    return;
+  }
+
+  const size_t pre_nul_len = len * sizeof(wchar_t) - sizeof(wchar_t);
+  memset(byte_buf, (32 + (byte_len % 96)), pre_nul_len);
+  const wchar_t needle = L'a';
+  memcpy(byte_buf + pre_nul_len, &needle, sizeof(needle));
+  EXPECT_EQ(reinterpret_cast<const wchar_t*>(byte_buf + pre_nul_len),
+            wmemchr(reinterpret_cast<const wchar_t*>(byte_buf), L'a', len));
+}
+
+TEST(wchar, wmemchr_align) {
+  RunSingleBufferAlignTest(LARGE, DoWmemchrTest);
+}
+
+TEST(wchar, wmemchr_overread) {
+  RunSingleBufferOverreadTest(DoWmemchrTest);
+}
+
 TEST(wchar, wmemcmp) {
   ASSERT_EQ(0, wmemcmp(L"aaaa", L"aaab", 3));
   ASSERT_TRUE(wmemcmp(L"aaaa", L"aaab", 4) < 0);
@@ -1302,7 +1339,22 @@ TEST(wchar, wmemset) {
   ASSERT_EQ(dst[1], wchar_t(0x12345678));
   ASSERT_EQ(dst[2], wchar_t(0x12345678));
   ASSERT_EQ(dst[3], wchar_t(0));
+  // A zero length touches nothing.
   ASSERT_EQ(dst, wmemset(dst, L'y', 0));
+  ASSERT_EQ(dst[0], wchar_t(0x12345678));
+}
+
+// We special-case wmemset() to 0, so we need to test that explicitly.
+TEST(wchar, wmemset_0) {
+  wchar_t dst[4] = { 0x12345678, 0x12345678, 0x12345678, 0x12345678 };
+  ASSERT_EQ(dst, wmemset(dst, 0, 3));
+  ASSERT_EQ(dst[0], wchar_t(0));
+  ASSERT_EQ(dst[1], wchar_t(0));
+  ASSERT_EQ(dst[2], wchar_t(0));
+  ASSERT_EQ(dst[3], wchar_t(0x12345678));
+  // A zero length touches nothing.
+  dst[0] = wchar_t(0x12345678);
+  ASSERT_EQ(dst, wmemset(dst, 0, 0));
   ASSERT_EQ(dst[0], wchar_t(0x12345678));
 }
 

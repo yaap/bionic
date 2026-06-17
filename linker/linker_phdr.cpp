@@ -47,6 +47,7 @@
 #include "linker_utils.h"
 
 #include "private/CFIShadow.h"  // For kLibraryAlignment
+#include "private/bionic_arc4random.h"
 #include "private/bionic_asm_note.h"
 #include "private/bionic_inline_raise.h"
 #include "private/elf_note.h"
@@ -219,10 +220,11 @@ bool ElfReader::Load(address_space_params* address_space) {
     did_load_ = true;
 #if defined(__aarch64__)
     // For Armv8.5-A loaded executable segments may require PROT_BTI.
-    if (note_gnu_property_.IsBTICompatible()) {
+    if (note_gnu_property_->IsBTICompatible()) {
       did_load_ =
           (phdr_table_protect_segments(phdr_table_, phdr_num_, load_bias_, should_pad_segments_,
-                                       should_use_16kib_app_compat_, &note_gnu_property_) == 0);
+                                       should_use_16kib_app_compat_,
+                                       note_gnu_property_.get()) == 0);
     }
 #endif
   }
@@ -247,7 +249,7 @@ const char* ElfReader::get_string(ElfW(Word) index) const {
 bool ElfReader::ReadElfHeader() {
   ssize_t rc = TEMP_FAILURE_RETRY(pread64(fd_, &header_, sizeof(header_), file_offset_));
   if (rc < 0) {
-    DL_ERR("can't read file \"%s\": %s", name_.c_str(), strerror(errno));
+    DL_ERR("can't read file \"%s\": %m", name_.c_str());
     return false;
   }
 
@@ -624,8 +626,7 @@ static void* ReserveWithAlignmentPadding(size_t size, size_t mapping_align, size
     // to improve address randomization and make it harder to locate this library code by probing.
     munmap(mmap_ptr, mmap_size);
     mapping_align = std::max(mapping_align, kGapAlignment);
-    gap_size =
-        kGapAlignment * (is_first_stage_init() ? 1 : arc4random_uniform(kMaxGapUnits - 1) + 1);
+    gap_size = kGapAlignment * (__libc_arc4random_uniform_or_zero(kMaxGapUnits - 1) + 1);
     mmap_size = __builtin_align_up(size + gap_size, mapping_align) + mapping_align - page_size();
     mmap_ptr = reinterpret_cast<uint8_t*>(mmap(nullptr, mmap_size, PROT_NONE, mmap_flags, -1, 0));
     if (mmap_ptr == MAP_FAILED) {
@@ -645,9 +646,7 @@ static void* ReserveWithAlignmentPadding(size_t size, size_t mapping_align, size
   uint8_t* first = __builtin_align_up(mmap_ptr, mapping_align);
   uint8_t* last = __builtin_align_down(gap_start, mapping_align) - size;
 
-  // arc4random* is not available in first stage init because /dev/urandom hasn't yet been
-  // created. Don't randomize then.
-  size_t n = is_first_stage_init() ? 0 : arc4random_uniform((last - first) / start_align + 1);
+  size_t n = __libc_arc4random_uniform_or_zero((last - first) / start_align + 1);
   uint8_t* start = first + n * start_align;
   // Unmap the extra space around the allocation.
   // Keep it mapped PROT_NONE on 64-bit targets where address space is plentiful to make it harder
@@ -1709,7 +1708,8 @@ bool ElfReader::FindPhdr() {
 // It is not considered an error if such section is missing.
 bool ElfReader::FindGnuPropertySection() {
 #if defined(__aarch64__)
-  note_gnu_property_ = GnuPropertySection(phdr_table_, phdr_num_, load_bias_, name_.c_str());
+  note_gnu_property_ = std::make_shared<GnuPropertySection>(phdr_table_, phdr_num_,
+                                                            load_bias_, name_.c_str());
 #endif
   return true;
 }

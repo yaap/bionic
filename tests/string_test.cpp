@@ -26,6 +26,12 @@
 #include <sys/cdefs.h>
 
 #include <algorithm>
+#include <array>
+#include <concepts>
+#include <limits>
+#include <numeric>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "buffer_tests.h"
@@ -444,7 +450,9 @@ TEST(STRING_TEST, strchr_multiple) {
   }
 }
 
-TEST(STRING_TEST, strchr) {
+template <typename Fn>
+  requires std::invocable<Fn, const char*, int>
+static void RunStrchrTest(Fn strchr_fn) {
   int seek_char = 'R';
 
   StringTestState<char> state(SMALL);
@@ -470,10 +478,32 @@ TEST(STRING_TEST, strchr) {
         expected = state.ptr1 + pos;
       }
 
-      ASSERT_TRUE(strchr(state.ptr1, seek_char) == expected);
+      ASSERT_TRUE(strchr_fn(state.ptr1, seek_char) == expected);
     }
   }
 }
+
+TEST(STRING_TEST, strchr) {
+  RunStrchrTest([](const char* s, int c) { return strchr(s, c); });
+}
+
+#if !defined(NOFORTIFY)
+TEST(STRING_TEST, strchr_chk) {
+#if defined(__BIONIC__)
+  RunStrchrTest([](const char* str, int needle) {
+    const size_t l = strlen(str);
+    const char* plus_one = __strchr_chk(str, needle, l + 1);
+    const char* plus_one_thousand = __strchr_chk(str, needle, l + 1000);
+    const char* unknown_size = __strchr_chk(str, needle, size_t(-1));
+    EXPECT_EQ(plus_one, plus_one_thousand);
+    EXPECT_EQ(plus_one, unknown_size);
+    return plus_one;
+  });
+#else   // __BIONIC__
+  GTEST_SKIP() << "strchr_chk tests not available";
+#endif  // __BIONIC__
+}
+#endif  // NOFORTIFY
 
 TEST(STRING_TEST, strchrnul) {
   const char* s = "01234222";
@@ -753,7 +783,9 @@ TEST(STRING_TEST, strncpy) {
   }
 }
 
-TEST(STRING_TEST, strrchr) {
+template <typename Fn>
+  requires std::invocable<Fn, const char*, int>
+static void RunStrrchrTest(Fn strrchr_fn) {
   int seek_char = 'M';
   StringTestState<char> state(SMALL);
   for (size_t i = 1; i < state.n; i++) {
@@ -778,10 +810,32 @@ TEST(STRING_TEST, strrchr) {
         expected = state.ptr1 + pos;
       }
 
-      ASSERT_TRUE(strrchr(state.ptr1, seek_char) == expected);
+      ASSERT_TRUE(strrchr_fn(state.ptr1, seek_char) == expected);
     }
   }
 }
+
+TEST(STRING_TEST, strrchr) {
+  RunStrrchrTest([](const char* s, int c) { return strrchr(s, c); });
+}
+
+#if !defined(NOFORTIFY)
+TEST(STRING_TEST, strrchr_chk) {
+#if defined(__BIONIC__)
+  RunStrrchrTest([](const char* str, int needle) {
+    const size_t l = strlen(str);
+    const char* plus_one = __strrchr_chk(str, needle, l + 1);
+    const char* plus_one_thousand = __strrchr_chk(str, needle, l + 1000);
+    const char* unknown_size = __strrchr_chk(str, needle, size_t(-1));
+    EXPECT_EQ(plus_one, plus_one_thousand);
+    EXPECT_EQ(plus_one, unknown_size);
+    return plus_one;
+  });
+#else   // __BIONIC__
+  GTEST_SKIP() << "strrchr_chk tests not available";
+#endif  // __BIONIC__
+}
+#endif  // NOFORTIFY
 
 TEST(STRING_TEST, memchr) {
   int seek_char = 'N';
@@ -1111,6 +1165,29 @@ TEST(STRING_TEST, strlen_overread) {
   RunSingleBufferOverreadTest(DoStrlenTest);
 }
 
+static void DoStrnlenTest(uint8_t* buf, size_t len) {
+  if (!len) {
+    return;
+  }
+
+  auto* s = reinterpret_cast<char*>(buf);
+  memset(buf, (32 + (len % 96)), len);
+  ASSERT_EQ(len, strnlen(s, len));
+
+  buf[len - 1] = '\0';
+  ASSERT_EQ(len - 1, strnlen(s, len));
+  ASSERT_EQ(len - 1, strnlen(s, len + 1000));
+  ASSERT_EQ(len - 1, strnlen(s, std::numeric_limits<size_t>::max()));
+}
+
+TEST(STRING_TEST, strnlen_align) {
+  RunSingleBufferAlignTest(LARGE, DoStrnlenTest);
+}
+
+TEST(STRING_TEST, strnlen_overread) {
+  RunSingleBufferOverreadTest(DoStrnlenTest);
+}
+
 static void DoStrcpyTest(uint8_t* src, uint8_t* dst, size_t len) {
   if (len >= 1) {
     memset(src, (32 + (len % 96)), len - 1);
@@ -1393,10 +1470,15 @@ static void DoMemchrTest(uint8_t* buf, size_t len) {
       ASSERT_EQ(&buf[0], memchr(buf, search_value, len));
 
       buf[0] = value;
-      buf[len - 1] = search_value;
-      // The search value is the last element in the buffer.
-      ASSERT_EQ(&buf[len - 1], memchr(buf, search_value, len));
     }
+
+    // The search value is the last element in the buffer.
+    buf[len - 1] = search_value;
+    ASSERT_EQ(&buf[len - 1], memchr(buf, search_value, len));
+
+    // The search value is the last element in the buffer, and the length
+    // spans well beyond the buffer's end. C11 explicitly allows this.
+    ASSERT_EQ(&buf[len - 1], memchr(buf, search_value, len + 4096));
   }
 }
 
@@ -1408,30 +1490,37 @@ TEST(STRING_TEST, memchr_overread) {
   RunSingleBufferOverreadTest(DoMemchrTest);
 }
 
-static void DoStrchrTest(uint8_t* buf, size_t len) {
+template <typename Fn>
+  requires std::invocable<Fn, const char*, int>
+static void DoStrchrTestImpl(uint8_t* buf, size_t len, Fn strchr_fn) {
   if (len >= 1) {
     char value = 32 + (len % 96);
     char search_value = 33 + (len % 96);
     memset(buf, value, len - 1);
     buf[len - 1] = '\0';
     // The buffer does not contain the search value.
-    ASSERT_EQ(nullptr, strchr(reinterpret_cast<char*>(buf), search_value));
+    ASSERT_EQ(nullptr, strchr_fn(reinterpret_cast<char*>(buf), search_value));
     // Search for the special '\0' character.
-    ASSERT_EQ(reinterpret_cast<char*>(&buf[len - 1]), strchr(reinterpret_cast<char*>(buf), '\0'));
+    ASSERT_EQ(reinterpret_cast<char*>(&buf[len - 1]),
+              strchr_fn(reinterpret_cast<char*>(buf), '\0'));
     if (len >= 2) {
       buf[0] = search_value;
       // The search value is the first element in the buffer.
-      ASSERT_EQ(reinterpret_cast<char*>(&buf[0]), strchr(reinterpret_cast<char*>(buf),
-                                                         search_value));
+      ASSERT_EQ(reinterpret_cast<char*>(&buf[0]),
+                strchr_fn(reinterpret_cast<char*>(buf), search_value));
 
       buf[0] = value;
       buf[len - 2] = search_value;
       // The search value is the second to last element in the buffer.
       // The last element is the '\0' character.
-      ASSERT_EQ(reinterpret_cast<char*>(&buf[len - 2]), strchr(reinterpret_cast<char*>(buf),
-                                                               search_value));
+      ASSERT_EQ(reinterpret_cast<char*>(&buf[len - 2]),
+                strchr_fn(reinterpret_cast<char*>(buf), search_value));
     }
   }
+}
+
+static void DoStrchrTest(uint8_t* buf, size_t len) {
+  DoStrchrTestImpl(buf, len, [](const char* s, int c) { return strchr(s, c); });
 }
 
 TEST(STRING_TEST, strchr_align) {
@@ -1442,30 +1531,37 @@ TEST(STRING_TEST, strchr_overread) {
   RunSingleBufferOverreadTest(DoStrchrTest);
 }
 
-static void DoStrrchrTest(uint8_t* buf, size_t len) {
+template <typename Fn>
+  requires std::invocable<Fn, const char*, int>
+static void DoStrrchrTestImpl(uint8_t* buf, size_t len, Fn strrchr_fn) {
   if (len >= 1) {
     char value = 32 + (len % 96);
     char search_value = 33 + (len % 96);
     memset(buf, value, len - 1);
     buf[len - 1] = '\0';
     // The buffer does not contain the search value.
-    ASSERT_EQ(nullptr, strrchr(reinterpret_cast<char*>(buf), search_value));
+    ASSERT_EQ(nullptr, strrchr_fn(reinterpret_cast<char*>(buf), search_value));
     // Search for the special '\0' character.
-    ASSERT_EQ(reinterpret_cast<char*>(&buf[len - 1]), strrchr(reinterpret_cast<char*>(buf), '\0'));
+    ASSERT_EQ(reinterpret_cast<char*>(&buf[len - 1]),
+              strrchr_fn(reinterpret_cast<char*>(buf), '\0'));
     if (len >= 2) {
       buf[0] = search_value;
       // The search value is the first element in the buffer.
-      ASSERT_EQ(reinterpret_cast<char*>(&buf[0]), strrchr(reinterpret_cast<char*>(buf),
-                                                          search_value));
+      ASSERT_EQ(reinterpret_cast<char*>(&buf[0]),
+                strrchr_fn(reinterpret_cast<char*>(buf), search_value));
 
       buf[0] = value;
       buf[len - 2] = search_value;
       // The search value is the second to last element in the buffer.
       // The last element is the '\0' character.
-      ASSERT_EQ(reinterpret_cast<char*>(&buf[len - 2]), strrchr(reinterpret_cast<char*>(buf),
-                                                                search_value));
+      ASSERT_EQ(reinterpret_cast<char*>(&buf[len - 2]),
+                strrchr_fn(reinterpret_cast<char*>(buf), search_value));
     }
   }
+}
+
+static void DoStrrchrTest(uint8_t* buf, size_t len) {
+  DoStrrchrTestImpl(buf, len, [](const char* s, int c) { return strrchr(s, c); });
 }
 
 TEST(STRING_TEST, strrchr_align) {
@@ -1475,6 +1571,103 @@ TEST(STRING_TEST, strrchr_align) {
 TEST(STRING_TEST, strrchr_overread) {
   RunSingleBufferOverreadTest(DoStrrchrTest);
 }
+
+#if !defined(NOFORTIFY)
+#if defined(__BIONIC__)
+static void DoStrchrChkTest(uint8_t* buf, size_t len) {
+  DoStrchrTestImpl(buf, len, [len](const char* s, int c) { return __strchr_chk(s, c, len); });
+}
+#endif  // __BIONIC__
+
+TEST(STRING_TEST, strchr_chk_align) {
+#if defined(__BIONIC__)
+  RunSingleBufferAlignTest(MEDIUM, DoStrchrChkTest);
+#else   // __BIONIC__
+  GTEST_SKIP() << "strchr_chk_align tests not available";
+#endif  // __BIONIC__
+}
+
+TEST(STRING_TEST, strchr_chk_overread) {
+#if defined(__BIONIC__)
+  RunSingleBufferOverreadTest(DoStrchrChkTest);
+#else   // __BIONIC__
+  GTEST_SKIP() << "strchr_chk_overread tests not available";
+#endif  // __BIONIC__
+}
+
+#if defined(__BIONIC__)
+static void DoStrrchrChkTest(uint8_t* buf, size_t len) {
+  DoStrrchrTestImpl(buf, len, [len](const char* s, int c) { return __strrchr_chk(s, c, len); });
+}
+#endif  // __BIONIC__
+
+TEST(STRING_TEST, strrchr_chk_align) {
+#if defined(__BIONIC__)
+  RunSingleBufferAlignTest(MEDIUM, DoStrrchrChkTest);
+#else   // __BIONIC__
+  GTEST_SKIP() << "strrchr_chk_align tests not available";
+#endif  // __BIONIC__
+}
+
+TEST(STRING_TEST, strrchr_chk_overread) {
+#if defined(__BIONIC__)
+  RunSingleBufferOverreadTest(DoStrrchrChkTest);
+#else   // __BIONIC__
+  GTEST_SKIP() << "strrchr_chk_overread tests not available";
+#endif  // __BIONIC__
+}
+#endif  // !NOFORTIFY
+
+#if !defined(NOFORTIFY)
+TEST(STRING_TEST, strchr_chk_bounds) {
+#if defined(__BIONIC__)
+  char buf[32];
+  memset(buf, 'A', sizeof(buf) - 1);
+  buf[31] = '\0';
+
+  buf[16] = 'X';
+  EXPECT_DEATH(__strchr_chk(buf, 'X', 16), "strchr: prevented read past end of buffer");
+  EXPECT_EQ(__strchr_chk(buf, 'X', 17), buf + 16);
+
+  buf[16] = 'A';
+  buf[20] = 'X';
+  EXPECT_DEATH(__strchr_chk(buf, 'X', 16), "strchr: prevented read past end of buffer");
+
+  buf[20] = 'A';
+  buf[16] = '\0';
+  EXPECT_DEATH(__strchr_chk(buf, 'X', 16), "strchr: prevented read past end of buffer");
+  EXPECT_EQ(__strchr_chk(buf, 'X', 17), nullptr);
+#else   // __BIONIC__
+  GTEST_SKIP() << "strchr_chk_bounds tests not available";
+#endif  // __BIONIC__
+}
+#endif  // !NOFORTIFY
+
+#if !defined(NOFORTIFY)
+TEST(STRING_TEST, strrchr_chk_bounds) {
+#if defined(__BIONIC__)
+  char buf[32];
+  memset(buf, 'A', sizeof(buf));
+  buf[31] = '\0';
+
+  buf[16] = 'X';
+  buf[17] = '\0';
+  EXPECT_DEATH(__strrchr_chk(buf, 'X', 17), "strrchr: prevented read past end of buffer");
+  EXPECT_EQ(__strrchr_chk(buf, 'X', 18), buf + 16);
+  buf[16] = 'A';
+  buf[17] = 'A';
+  buf[20] = 'X';
+  EXPECT_DEATH(__strrchr_chk(buf, 'X', 16), "strrchr: prevented read past end of buffer");
+
+  buf[20] = 'A';
+  buf[16] = '\0';
+  EXPECT_DEATH(__strrchr_chk(buf, 'X', 16), "strrchr: prevented read past end of buffer");
+  EXPECT_EQ(__strrchr_chk(buf, 'X', 17), nullptr);
+#else   // __BIONIC__
+  GTEST_SKIP() << "strrchr_chk_bounds tests not available";
+#endif  // __BIONIC__
+}
+#endif  // !NOFORTIFY
 
 #if !defined(ANDROID_HOST_MUSL)
 static void TestBasename(const char* in, const char* expected_out) {
@@ -1669,12 +1862,12 @@ TEST(STRING_TEST, memccpy_smoke) {
 
   memset(dst, 0, sizeof(dst));
   char* p = static_cast<char*>(memccpy(dst, "hello world", ' ', 32));
-  ASSERT_STREQ("hello ", dst);
-  ASSERT_EQ(ptrdiff_t(6), p - dst);
+  EXPECT_STREQ("hello ", dst);
+  EXPECT_EQ(ptrdiff_t(6), p - dst);
 
   memset(dst, 0, sizeof(dst));
-  ASSERT_EQ(nullptr, memccpy(dst, "hello world", ' ', 4));
-  ASSERT_STREQ("hell", dst);
+  EXPECT_EQ(nullptr, memccpy(dst, "hello world", ' ', 4));
+  EXPECT_STREQ("hell", dst);
 }
 
 TEST(STRING_TEST, memset_explicit_smoke) {
@@ -1722,6 +1915,29 @@ TEST(STRING_TEST, strspn) {
   EXPECT_EQ(6u, strspn("hello\x80world", "helo\x80rld"));
 }
 
+static void DoStrspnTest(uint8_t* raw_buf, size_t len) {
+  if (!len) {
+    return;
+  }
+
+  char* buf = reinterpret_cast<char*>(raw_buf);
+
+  if (len == 1) {
+    buf[0] = '\0';
+    EXPECT_EQ(0ul, strspn(buf, "abc"));
+    EXPECT_EQ(0ul, strspn("abc", buf));
+    return;
+  }
+
+  memset(buf, 'a', len - 1);
+  buf[len - 1] = '\0';
+  EXPECT_EQ(strspn(buf, buf), len - 1);
+}
+
+TEST(STRING_TEST, strspn_overread) {
+  RunSingleBufferOverreadTest(DoStrspnTest);
+}
+
 TEST(STRING_TEST, strcspn) {
   EXPECT_EQ(5u, strcspn("hello", ""));
   EXPECT_EQ(0u, strcspn("hello", "ehl"));
@@ -1730,6 +1946,139 @@ TEST(STRING_TEST, strcspn) {
 
   // Check that the implementation copes with top bit set characters.
   EXPECT_EQ(5u, strcspn("hello\x80world", "\x80"));
+}
+
+static void DoStrcspnTest(uint8_t* raw_buf, size_t len) {
+  if (len <= 2) {
+    return;
+  }
+
+  char* buf = reinterpret_cast<char*>(raw_buf);
+
+  // Split the buffer into two equal parts with different contents, and then
+  // run both configurations on strcspn. This should provide sufficient variety
+  // in sizes.
+  const size_t split_point = len / 2;
+  char* buf_1_start = buf;
+  char* buf_1_nul = buf + split_point;
+  char* buf_2_start = buf_1_nul + 1;
+  char* buf_2_nul = buf + len - 1;
+
+  memset(buf_1_start, 'a', buf_1_nul - buf_1_start);
+  *buf_1_nul = '\0';
+  memset(buf_2_start, 'b', buf_2_nul - buf_2_start);
+  *buf_2_nul = '\0';
+
+  EXPECT_EQ(strcspn(buf_2_start, buf_1_start), len - split_point - 2);
+  EXPECT_EQ(strcspn(buf_1_start, buf_2_start), split_point);
+}
+
+TEST(STRING_TEST, strcspn_overread) {
+  RunSingleBufferOverreadTest(DoStrcspnTest);
+}
+
+// Haystack size classes for large needle test functions; see comments in those
+// for how these were determined.
+constexpr auto STRSPN_HAYSTACK_SIZE_CLASSES = {16, 64, 128, 192, 256};
+
+// Returns a string of 0x01, 0x02, 0x03, ... 0xFF
+static std::string StringOfAllChars() {
+  std::string chars(255, 'a');
+  std::iota(chars.begin(), chars.end(), 1);
+  return chars;
+}
+
+static std::string MustReplaceChar(std::string_view haystack, char replace_what,
+                                   char replace_with) {
+  std::string s{haystack};
+  auto i = s.find(replace_what);
+  if (i == std::string::npos) {
+    fprintf(stderr, "Fatal: no '%c' in given string.\n", replace_what);
+    abort();
+  }
+  s[i] = replace_with;
+  return s;
+}
+
+TEST(STRING_TEST, strspn_large_needle_many_haystack_sizes) {
+  // This test was built with psimd's strspn impl in mind, which is written:
+  // - with one path for keep/reject sets of <= 4 chars, falling back to
+  // - one path for haystacks <= 128B, falling back to
+  // - one general path for all other cases
+  //
+  // The 'general path for all other cases' also branches based on whether the
+  // keep/reject set has any chars >= 0x80.
+  //
+  // Most existing handwritten tests fall into the "<= 4 chars keep/reject set"
+  // path, so this ignores that.
+  const std::string all_chars = StringOfAllChars();
+  for (size_t size_class : STRSPN_HAYSTACK_SIZE_CLASSES) {
+    std::string haystack(size_class, 'a');
+    EXPECT_EQ(strspn(haystack.c_str(), all_chars.c_str()), size_class);
+
+    auto test_back_off_from_end = [&](char target, size_t set_size = 0) {
+      const char not_target = target + 1;
+      std::fill(haystack.begin(), haystack.end(), not_target);
+
+      std::string all_chars_except_target = MustReplaceChar(all_chars, target, not_target);
+      if (set_size) {
+        all_chars_except_target.resize(set_size);
+      }
+
+      for (size_t i = 1; i < 16; ++i) {
+        char& replace_char = haystack[haystack.size() - i];
+        char old_char = replace_char;
+        replace_char = target;
+        EXPECT_EQ(strspn(haystack.c_str(), all_chars_except_target.c_str()), size_class - i);
+        replace_char = old_char;
+      }
+    };
+
+    test_back_off_from_end('a');
+    test_back_off_from_end('a', /*set_size=*/127);
+    test_back_off_from_end(0xA0);
+  }
+}
+
+TEST(STRING_TEST, strcspn_large_needle_many_haystack_sizes) {
+  // This test was built with psimd's strcspn impl in mind, which is written:
+  // strspn, so the same special cases apply:
+  // - with one path for keep/reject sets of <= 4 chars, falling back to
+  // - one path for haystacks <= 128B, falling back to
+  // - one general path for all other cases
+  //
+  // The 'general path for all other cases' also branches based on whether the
+  // keep/reject set has any chars >= 0x80.
+  //
+  // Most existing handwritten tests fall into the "<= 4 chars keep/reject set"
+  // path, so this ignores that.
+  const std::string all_chars = StringOfAllChars();
+  for (size_t size_class : STRSPN_HAYSTACK_SIZE_CLASSES) {
+    std::string haystack(size_class, 'a');
+
+    auto test_back_off_from_end = [&](char target, size_t set_size = 0) {
+      const char not_target = target + 1;
+      std::fill(haystack.begin(), haystack.end(), target);
+
+      std::string all_chars_except_target = MustReplaceChar(all_chars, target, not_target);
+      if (set_size) {
+        all_chars_except_target.resize(set_size);
+      }
+
+      EXPECT_EQ(strcspn(haystack.c_str(), all_chars_except_target.c_str()), size_class);
+      for (size_t i = 1; i < 16; ++i) {
+        char& replace_char = haystack[haystack.size() - i];
+        char old_char = replace_char;
+        replace_char = not_target;
+        EXPECT_EQ(strcspn(haystack.c_str(), all_chars_except_target.c_str()), size_class - i);
+        replace_char = old_char;
+      }
+    };
+
+    test_back_off_from_end('a');
+    test_back_off_from_end('a', /*set_size=*/127);
+    test_back_off_from_end(0xA0);
+  }
 }
 
 TEST(STRING_TEST, strsep) {

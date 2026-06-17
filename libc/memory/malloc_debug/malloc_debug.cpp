@@ -183,6 +183,7 @@ void debug_free(void* pointer);
 void* debug_aligned_alloc(size_t alignment, size_t size);
 void* debug_memalign(size_t alignment, size_t bytes);
 void* debug_realloc(void* pointer, size_t bytes);
+void* debug_reallocarray(void* pointer, size_t item_count, size_t item_size);
 void* debug_calloc(size_t nmemb, size_t bytes);
 struct mallinfo debug_mallinfo();
 int debug_mallopt(int param, int value);
@@ -707,7 +708,7 @@ void debug_free(void* pointer) {
 
     // Need to get the present bytes before the pointer is freed in case the
     // memory is released during the free call.
-    present_bytes = g_debug->record->GetPresentBytes(pointer, size);
+    present_bytes = RecordData::GetPresentBytes(pointer, size);
   }
 
   TimedResult result = InternalFree(pointer);
@@ -868,7 +869,7 @@ void* debug_realloc(void* pointer, size_t bytes) {
   if (g_debug->config().options() & RECORD_ALLOCS) {
     // Need to get the present bytes before the pointer is freed in case the
     // memory is released during the free call.
-    present_bytes = g_debug->record->GetPresentBytes(pointer, old_size);
+    present_bytes = RecordData::GetPresentBytes(pointer, old_size);
   }
 
   if (bytes == 0) {
@@ -990,6 +991,19 @@ void* debug_realloc(void* pointer, size_t bytes) {
   }
 
   return new_pointer;
+}
+
+void* debug_reallocarray(void* pointer, size_t item_count, size_t item_size) {
+  if (DebugCallsDisabled()) {
+    return g_dispatch->reallocarray(pointer, item_count, item_size);
+  }
+
+  size_t new_size;
+  if (__builtin_mul_overflow(item_count, item_size, &new_size)) {
+    errno = ENOMEM;
+    return nullptr;
+  }
+  return debug_realloc(pointer, new_size);
 }
 
 void* debug_calloc(size_t nmemb, size_t bytes) {
@@ -1154,6 +1168,7 @@ int debug_malloc_iterate(uintptr_t base, size_t size, void (*callback)(uintptr_t
 
 void debug_malloc_disable() {
   ScopedConcurrentLock lock;
+  ScopedDisableDebugCalls disable;
   if (g_debug->pointer) {
     // Acquire the pointer locks first, otherwise, the code can be holding
     // the allocation lock and deadlock trying to acquire a pointer lock.

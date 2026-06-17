@@ -89,6 +89,28 @@ bool ElfReader::HasAtMostOneRelroSegment(const ElfW(Phdr)** relro_phdr) {
   return true;
 }
 
+static uint64_t get_max_section_alignment(const ElfW(Shdr) * shdr_table, size_t shdr_num) {
+  ElfW(Xword) max_align = 1;
+  for (size_t i = 0; i < shdr_num; ++i) {
+    if (shdr_table[i].sh_flags & SHF_ALLOC) {
+      max_align = std::max(static_cast<ElfW(Xword)>(max_align),
+                           static_cast<ElfW(Xword)>(shdr_table[i].sh_addralign));
+    }
+  }
+
+  return static_cast<uint64_t>(max_align);
+}
+
+/*
+ * Returns the offset/shift needed to align @vaddr to a page boundary
+ * for RX|RW compat loading.
+ */
+static inline ElfW(Addr) perm_boundary_offset(const ElfW(Addr) addr) {
+  ElfW(Addr) offset = page_offset(addr);
+
+  return offset ? page_size() - offset : 0;
+}
+
 /*
  * In 16KiB compatibility mode ELFs with the following segment layout
  * can be loaded successfully:
@@ -174,36 +196,36 @@ bool ElfReader::IsEligibleForRXRWAppCompat(ElfW(Addr)* vaddr) {
     }
   }
 
-  if (!relro_phdr) {
+  if (relro_phdr) {
+    // The RELRO segment is present, it must be the prefix of the first RW segment.
+    if (!segment_contains_prefix(first_rw, relro_phdr)) {
+      DL_WARN("\"%s\": RX|RW compat loading failed: RELRO is not in the first RW segment",
+              name_.c_str());
+      return false;
+    }
+
+    uint64_t end;
+    if (__builtin_add_overflow(relro_phdr->p_vaddr, relro_phdr->p_memsz, &end)) {
+      DL_WARN("\"%s\": RX|RW compat loading failed: relro vaddr + memsz overflowed", name_.c_str());
+      return false;
+    }
+    *vaddr = __builtin_align_up(end, kCompatPageSize);
+  } else {
     *vaddr = __builtin_align_down(first_rw->p_vaddr, kCompatPageSize);
-    return true;
   }
 
-  // The RELRO segment is present, it must be the prefix of the first RW segment.
-  if (!segment_contains_prefix(first_rw, relro_phdr)) {
-    DL_WARN("\"%s\": RX|RW compat loading failed: RELRO is not in the first RW segment",
-            name_.c_str());
+  // The extra offset applied to the compat-loaded binary must respect its maximum required
+  // alignment, otherwise we should use RWX compat mode, which doesn't apply any extra offsets.
+  uint64_t max_section_align = get_max_section_alignment(shdr_table_, shdr_num_);
+  uint64_t offset = perm_boundary_offset(*vaddr);
+  if (offset % max_section_align != 0) {
+    DL_WARN("\"%s\": RX|RW compat loading failed: maximum section alignment requirement of %" PRIu64
+            " is too strict to apply an offset of %" PRIu64 " bytes",
+            name_.c_str(), max_section_align, offset);
     return false;
   }
 
-  uint64_t end;
-  if (__builtin_add_overflow(relro_phdr->p_vaddr, relro_phdr->p_memsz, &end)) {
-    DL_WARN("\"%s\": RX|RW compat loading failed: relro vaddr + memsz overflowed", name_.c_str());
-    return false;
-  }
-
-  *vaddr = __builtin_align_up(end, kCompatPageSize);
   return true;
-}
-
-/*
- * Returns the offset/shift needed to align @vaddr to a page boundary
- * for RX|RW compat loading.
- */
-static inline ElfW(Addr) perm_boundary_offset(const ElfW(Addr) addr) {
-  ElfW(Addr) offset = page_offset(addr);
-
-  return offset ? page_size() - offset : 0;
 }
 
 enum relro_pos_t {
@@ -469,31 +491,143 @@ void ElfReader::FixMinAlignFor16KiB() {
       min_align_ = std::min(min_align_, relro_min_align);
     }
   }
+
+  if (min_align_ < 16 * 1024) {
+    return;
+  }
+
+  // In some apps we also observe binaries where the LOAD segments overlap when loaded with 16KiB
+  // pages, even though they have p_align >= 16KiB. Strictly speaking this is not a violation of the
+  // ELF specification, but it causes parts of the earlier LOAD segment to be discarded, which can
+  // cause issues. Therefore we check for this case as well, and set min_align_ to 4KiB if we detect
+  // it, ensuring that the binary is loaded in 16KiB compatibility mode.
+  ElfW(Addr) prev_load_end = 0;
+  for (size_t i = 0; i < phdr_num_; ++i) {
+    const ElfW(Phdr)* phdr = &phdr_table_[i];
+    if (phdr->p_type != PT_LOAD) {
+      continue;
+    }
+
+    if (prev_load_end > page_start(phdr->p_vaddr)) {
+      min_align_ = 4 * 1024;
+      break;
+    }
+    prev_load_end = phdr->p_vaddr + phdr->p_memsz;
+  }
 }
 
 /*
  * Apply RX or RWX protection to the code region of the ELF being loaded in
  * 16KiB compat mode.
  *
- * Input:
- *   start                            -> start address of the compat code region.
- *   size                             -> size of the compat code region in bytes.
- *   should_16kib_app_compat_use_rwx  -> use RWX or RX permission.
- *   note_gnu_property                -> AArch64-only: use PROT_BTI if the ELF is BTI-compatible.
  * Return:
- *   0 on success, -1 on failure (error code in errno).
+ *   true on success, false on failure (error code in errno).
  */
-int phdr_table_protect_16kib_app_compat_code(ElfW(Addr) start, ElfW(Addr) size,
-                                             bool should_16kib_app_compat_use_rwx,
-                                             const GnuPropertySection* note_gnu_property __unused) {
+bool soinfo::protect_16kib_app_compat_code() {
+  if (!should_use_16kib_app_compat_) {
+    return true;
+  }
+
   int prot = PROT_READ | PROT_EXEC;
-  if (should_16kib_app_compat_use_rwx) {
+  if (should_16kib_app_compat_use_rwx_) {
     prot |= PROT_WRITE;
   }
+
 #ifdef __aarch64__
-  if (note_gnu_property != nullptr && note_gnu_property->IsBTICompatible()) {
+  if (note_gnu_property_ == nullptr) {
+    note_gnu_property_ = std::make_shared<GnuPropertySection>(this);
+  }
+
+  if (note_gnu_property_->IsBTICompatible()) {
     prot |= PROT_BTI;
   }
 #endif
-  return mprotect(reinterpret_cast<void*>(start), size, prot);
+
+  if (mprotect(reinterpret_cast<void*>(compat_code_start_), compat_code_size_, prot)) {
+    DL_ERR("failed to set execute permission for compat loaded binary \"%s\": %m",
+           get_realpath());
+    return false;
+  }
+
+  if (should_16kib_app_compat_use_rwx_) {
+    return protect_16kib_app_compat_middle_pages();
+  }
+
+  return true;
+}
+
+static bool protect_segment_middle_pages(const soinfo* si,
+                                         const ElfW(Phdr)* phdr) {
+  int prot = PFLAGS_TO_PROT(phdr->p_flags);
+
+  // force the RELRO protection to be read-only.
+  if (phdr->p_type == PT_GNU_RELRO) prot = PROT_READ;
+
+  uintptr_t seg_start = si->load_bias + phdr->p_vaddr;
+  uintptr_t seg_end = seg_start + phdr->p_memsz;
+
+  // Use physical page size alignment for mprotect.
+  uintptr_t p_start = __builtin_align_up(seg_start, page_size());
+  uintptr_t p_end = __builtin_align_down(seg_end, page_size());
+
+  if (p_start < p_end) {
+    if (mprotect(reinterpret_cast<void*>(p_start),
+                 p_end - p_start, prot) == -1) {
+      DL_ERR("failed to set protection for compat loaded binary \"%s\": %m",
+             si->get_realpath());
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/*
+ * Apply fine-grained protection to the ELF being loaded in 16KB
+ * RWX compat mode. Restore middle page permission to original.
+ *
+ * Return:
+ *   true on success, false on failure (error code in errno).
+ */
+bool soinfo::protect_16kib_app_compat_middle_pages() {
+  const ElfW(Phdr)* phdr_table = this->phdr;
+  size_t phdr_count = this->phnum;
+
+  if (phdr_table == nullptr || phdr_count == 0) return true;
+
+  // We have to ensure that the RELRO protection is applied after
+  // the LOAD segment's because it could be overwritten by them.
+  // First pass: Handle all LOAD segments to restore original permissions.
+  for (size_t i = 0; i < phdr_count; ++i) {
+    const ElfW(Phdr)* phdr_ptr = &phdr_table[i];
+    if (phdr_ptr->p_type != PT_LOAD) continue;
+
+    if (!protect_segment_middle_pages(this, phdr_ptr)) return false;
+  }
+
+  // Second pass: Handle RELRO segments.
+  for (size_t i = 0; i < phdr_count; ++i) {
+    const ElfW(Phdr)* phdr_ptr = &phdr_table[i];
+    if (phdr_ptr->p_type == PT_GNU_RELRO) {
+      if (!protect_segment_middle_pages(this, phdr_ptr)) return false;
+    }
+  }
+
+  return true;
+}
+
+/*
+ * Apply RW protection to the code region of the ELF being loaded in 16KiB compat mode. This is used
+ * for restoring write permissions to the code region after ifunc resolution.
+ *
+ * Return:
+ *   true on success, false on failure (error code in errno).
+ */
+bool soinfo::unprotect_16kib_app_compat_code() {
+  if (!should_use_16kib_app_compat_) {
+    return true;
+  }
+
+  return mprotect(reinterpret_cast<void*>(compat_code_start_), compat_code_size_,
+                  PROT_READ | PROT_WRITE) == 0;
 }

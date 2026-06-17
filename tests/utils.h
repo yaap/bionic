@@ -18,9 +18,12 @@
 
 #include <dirent.h>
 #include <dlfcn.h>
+#include <elf.h>
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <inttypes.h>
+#include <malloc.h>
+#include <stdio.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/types.h>
@@ -293,6 +296,8 @@ bool IsLowRamDevice();
 
 int64_t NanoTime();
 
+int MapPflagsToProtFlags(uint32_t flags);
+
 class Errno {
  public:
   Errno(int e) : errno_(e) {}
@@ -300,5 +305,25 @@ class Errno {
 };
 void PrintTo(const Errno& e, std::ostream* os);
 bool operator==(const Errno& lhs, const Errno& rhs);
+
 #define ASSERT_ERRNO(expected_errno) ASSERT_EQ(Errno(expected_errno), Errno(errno))
+
+#define ASSERT_ERRNO_FAILURE(expected_errno, expected, actual) \
+  do { \
+    errno = 0; \
+    ASSERT_EQ((expected), (actual)); \
+    ASSERT_ERRNO((expected_errno)); \
+  } while (0)
+
+#define ASSERT_ERRNO_SUCCESS ASSERT_ERRNO_FAILURE
+
 #define EXPECT_ERRNO(expected_errno) EXPECT_EQ(Errno(expected_errno), Errno(errno))
+
+#define EXPECT_ERRNO_FAILURE(expected_errno, expected, actual) \
+  do { \
+    errno = 0; \
+    EXPECT_EQ((expected), (actual)); \
+    EXPECT_ERRNO((expected_errno)); \
+  } while (0)
+
+#define EXPECT_ERRNO_SUCCESS EXPECT_ERRNO_FAILURE

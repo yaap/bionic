@@ -1,6 +1,5 @@
 package {
     default_applicable_licenses: ["bionic_libc_license"],
-    default_team: "trendy_team_native_tools_libraries",
 }
 
 license {
@@ -49,11 +48,21 @@ libc_common_flags = [
     "-fno-builtin",
 ]
 
+soong_config_module_type {
+    name: "bionic_cc_defaults",
+    module_type: "cc_defaults",
+    config_namespace: "ANDROID",
+    bool_variables: ["release_deprecate_runtime_apex"],
+    properties: ["apex_available"],
+}
+
 // Define some common cflags
 // ========================================================
-cc_defaults {
+bionic_cc_defaults {
     name: "libc_defaults",
-    defaults: ["linux_bionic_supported"],
+    defaults: [
+        "linux_bionic_supported",
+    ],
     cflags: libc_common_flags + [
         "-DUSE_SCUDO",
     ],
@@ -105,7 +114,14 @@ cc_defaults {
         never: true,
     },
 
-    apex_available: ["com.android.runtime"],
+    soong_config_variables: {
+        release_deprecate_runtime_apex: {
+            apex_available: ["//apex_available:platform"],
+            conditions_default: {
+                apex_available: ["com.android.runtime"],
+            },
+        },
+    },
 }
 
 // Workaround for b/24465209.
@@ -294,6 +310,7 @@ cc_library_static {
     ],
 
     cflags: [
+        "-Wno-tautological-constant-out-of-range-compare",
         "-Wno-unused-parameter",
         // Don't use ridiculous amounts of stack.
         "-DALL_STATE",
@@ -376,7 +393,6 @@ cc_library_static {
     srcs: [
         "upstream-freebsd/lib/libc/stdlib/getopt_long.c",
         "upstream-freebsd/lib/libc/stdlib/quick_exit.c",
-        "upstream-freebsd/lib/libc/string/wcsdup.c",
     ],
 
     cflags: [
@@ -500,25 +516,16 @@ cc_library_static {
         "upstream-openbsd/lib/libc/stdio/mktemp.c",
         "upstream-openbsd/lib/libc/stdio/open_memstream.c",
         "upstream-openbsd/lib/libc/stdio/open_wmemstream.c",
-        "upstream-openbsd/lib/libc/stdio/rget.c",
         "upstream-openbsd/lib/libc/stdio/ungetc.c",
         "upstream-openbsd/lib/libc/stdio/ungetwc.c",
-        "upstream-openbsd/lib/libc/stdio/vasprintf.c",
-        "upstream-openbsd/lib/libc/stdio/vdprintf.c",
-        "upstream-openbsd/lib/libc/stdio/vsscanf.c",
         "upstream-openbsd/lib/libc/stdio/vswprintf.c",
-        "upstream-openbsd/lib/libc/stdio/vswscanf.c",
         "upstream-openbsd/lib/libc/stdio/wbuf.c",
         "upstream-openbsd/lib/libc/stdio/wsetup.c",
-        "upstream-openbsd/lib/libc/stdlib/getenv.c",
         "upstream-openbsd/lib/libc/stdlib/getsubopt.c",
         "upstream-openbsd/lib/libc/stdlib/recallocarray.c",
-        "upstream-openbsd/lib/libc/stdlib/setenv.c",
         "upstream-openbsd/lib/libc/stdlib/tfind.c",
         "upstream-openbsd/lib/libc/stdlib/tsearch.c",
         "upstream-openbsd/lib/libc/string/strcasestr.c",
-        "upstream-openbsd/lib/libc/string/strdup.c",
-        "upstream-openbsd/lib/libc/string/strndup.c",
 
         // These files are originally from OpenBSD,
         // and benefit from being compiled with openbsd-compat.h.
@@ -527,42 +534,6 @@ cc_library_static {
         "stdio/vfprintf.cpp",
         "stdio/vfwprintf.cpp",
     ],
-
-    // Each architecture has optimized versions of some routines,
-    // and only includes the portable C versions of ones it's missing.
-    arch: {
-        arm: {
-            srcs: [
-                "upstream-openbsd/lib/libc/string/stpncpy.c",
-                "upstream-openbsd/lib/libc/string/strncat.c",
-                "upstream-openbsd/lib/libc/string/strncmp.c",
-                "upstream-openbsd/lib/libc/string/strncpy.c",
-            ],
-        },
-        arm64: {
-            srcs: [
-                "upstream-openbsd/lib/libc/string/strcat.c",
-                "upstream-openbsd/lib/libc/string/stpncpy.c",
-                "upstream-openbsd/lib/libc/string/strncat.c",
-                "upstream-openbsd/lib/libc/string/strncpy.c",
-            ],
-        },
-        riscv64: {
-            srcs: [
-                "upstream-openbsd/lib/libc/string/stpncpy.c",
-            ],
-        },
-        x86: {
-            srcs: [
-                // x86 has custom implementations of all of these.
-            ],
-        },
-        x86_64: {
-            srcs: [
-                // x86_64 has custom/llvm-libc implementations of all of these.
-            ],
-        },
-    },
 
     cflags: [
         "-Wno-sign-compare",
@@ -703,7 +674,7 @@ cc_library_static {
 // icu4x_bionic.a - Thin Rust wrapper around ICU4X
 // ========================================================
 
-rust_ffi_static {
+rust_library_rlib {
     name: "libicu4x_bionic",
     crate_name: "icu4x_bionic",
     crate_root: "bionic/icu4x.rs",
@@ -725,6 +696,7 @@ rust_ffi_static {
     recovery_available: true,
     native_bridge_supported: true,
     sdk_version: "minimum",
+    no_stdlibs: true,
     defaults: ["linux_bionic_supported"],
 }
 
@@ -732,7 +704,11 @@ rust_ffi_static {
 // go/android-mto-staticlibs-in-make
 cc_rustlibs_for_make {
     name: "libstatic_rustlibs_for_make",
-    whole_static_libs: ["libicu4x_bionic"],
+    whole_static_libs: [
+        "libicu4x_bionic",
+        "libbionic_panic_abort",
+        "liblibc_alloc_rust",
+    ],
     apex_available: [
         "//apex_available:platform",
         "//apex_available:anyapex",
@@ -744,6 +720,167 @@ cc_rustlibs_for_make {
     recovery_available: true,
     native_bridge_supported: true,
     defaults: ["linux_bionic_supported"],
+}
+
+// ========================================================
+// portable_simd_* - C++ that uses SIMD intrinsics that are
+// meant to be "portable" to various different sets of
+// SIMD intrinsics.
+// ========================================================
+
+// Defaults for 'portable-simd' functions like `mem*`, `str*`.
+// These are highly performance-sensitive and an alternative to hand-written
+// asm, so:
+// - sanitizers are disabled (in part because these reach out of bounds in
+//   buffers on purpose - otherwise, there's no way to vectorize things like
+//   `strlen`.)
+// - stack protectors are disabled for parity with asm
+// - similarly, zeroing stack vars is disabled.
+cc_defaults {
+    name: "libc_bionic_portable_simd_defaults",
+    defaults: ["libc_defaults"],
+    header_libs: ["//external/google-highway:hwy_headers_only"],
+    cflags: [
+        "-fno-sanitize=all",
+        "-fno-stack-protector",
+        "-ftrivial-auto-var-init=uninitialized",
+    ],
+    sanitize: {
+        hwaddress: false,
+    },
+}
+
+cc_defaults {
+    name: "libc_bionic_portable_simd_x86_64_defaults",
+    defaults: ["libc_bionic_portable_simd_defaults"],
+    arch: {
+        x86_64: {
+            srcs: [
+                "portable-simd/memchr.cpp",
+                "portable-simd/strlen.cpp",
+                "portable-simd/strspn.cpp",
+            ],
+        },
+    },
+}
+
+cc_defaults {
+    name: "libc_bionic_portable_simd_x86_64_v2_defaults",
+    defaults: ["libc_bionic_portable_simd_x86_64_defaults"],
+    arch: {
+        x86_64: {
+            cflags: [
+                "-DPSIMD_TARGET_SSE=1",
+                // Since this is the Android build system's default ABI, don't
+                // bother setting CFLAGS for v2.
+            ],
+        },
+    },
+}
+
+cc_library_static {
+    name: "libc_bionic_portable_simd_x86_64_v2",
+    defaults: ["libc_bionic_portable_simd_x86_64_v2_defaults"],
+}
+
+cc_library_static {
+    name: "libc_bionic_portable_simd_x86_64_no_ifuncs",
+    defaults: ["libc_bionic_portable_simd_x86_64_v2_defaults"],
+    arch: {
+        x86_64: {
+            cflags: [
+                "-DPSIMD_ADD_LIBC_ALIASES=1",
+            ],
+        },
+    },
+}
+
+cc_library_static {
+    name: "libc_bionic_portable_simd_x86_64_v3",
+    defaults: ["libc_bionic_portable_simd_x86_64_defaults"],
+    arch: {
+        x86_64: {
+            cflags: [
+                "-DPSIMD_TARGET_AVX2=1",
+                // x86-64-v3 feature flags. We _could_ just write
+                // `-march=x86-64-v3` here, but doing so overrides any `-march`
+                // given by the build system, so `-march=x86-64-v3` could end
+                // up unnecessarily restricting what Clang can generate here.
+                //
+                // See https://clang.llvm.org/docs/UsersManual.html#x86 for the
+                // features Clang associates with x86-64-v3. These are kept in
+                // the order of that doc.
+                "-mavx",
+                "-mavx2",
+                "-mbmi",
+                "-mbmi2",
+                "-mf16c",
+                "-mfma",
+                "-mlzcnt",
+                "-mmovbe",
+                "-mxsave",
+            ],
+        },
+    },
+}
+
+cc_defaults {
+    name: "libc_bionic_portable_simd_arm64_neon_defaults",
+    defaults: ["libc_bionic_portable_simd_defaults"],
+    arch: {
+        arm64: {
+            cflags: [
+                "-DPSIMD_TARGET_NEON=1",
+                // Since this is the Android build system's default ABI, don't
+                // bother setting CFLAGS for neon.
+            ],
+            srcs: [
+                "portable-simd/memchr.cpp",
+                "portable-simd/strlen.cpp",
+            ],
+        },
+    },
+}
+
+cc_library_static {
+    name: "libc_bionic_portable_simd_arm64_neon_no_mte",
+    defaults: ["libc_bionic_portable_simd_arm64_neon_defaults"],
+    arch: {
+        arm64: {
+            srcs: [
+                "portable-simd/strspn.cpp",
+            ],
+        },
+    },
+}
+
+cc_library_static {
+    name: "libc_bionic_portable_simd_arm64_neon_mte",
+    defaults: ["libc_bionic_portable_simd_arm64_neon_defaults"],
+    arch: {
+        arm64: {
+            cflags: [
+                "-DPSIMD_MTE_ENABLED=1",
+            ],
+            // N.B., strspn's regular implementation is MTE-compatible, so it
+            // exports strspn/strcspn symbols directly. No need to include
+            // here.
+        },
+    },
+}
+
+cc_library_static {
+    name: "libc_bionic_portable_simd_arm64_no_ifuncs",
+    defaults: ["libc_bionic_portable_simd_arm64_neon_defaults"],
+    arch: {
+        arm64: {
+            cflags: [
+                // Conservatively assume MTE.
+                "-DPSIMD_MTE_ENABLED=1",
+                "-DPSIMD_ADD_LIBC_ALIASES=1",
+            ],
+        },
+    },
 }
 
 // ========================================================
@@ -764,6 +901,7 @@ cc_library_static {
         "bionic/__libc_current_sigrtmin.cpp",
         "bionic/__progname.cpp",
         "bionic/abort.cpp",
+        "bionic/abs.cpp",
         "bionic/accept.cpp",
         "bionic/access.cpp",
         "bionic/android_crash_detail.cpp",
@@ -786,15 +924,16 @@ cc_library_static {
         "bionic/casecmp.cpp",
         "bionic/chmod.cpp",
         "bionic/chown.cpp",
-        "bionic/clearenv.cpp",
         "bionic/clock.cpp",
         "bionic/clock_getcpuclockid.cpp",
         "bionic/clock_nanosleep.cpp",
         "bionic/clone.cpp",
         "bionic/ctype.cpp",
         "bionic/dirent.cpp",
+        "bionic/div.cpp",
         "bionic/dup.cpp",
         "bionic/endian.cpp",
+        "bionic/env.cpp",
         "bionic/environ.cpp",
         "bionic/err.cpp",
         "bionic/error.cpp",
@@ -849,7 +988,6 @@ cc_library_static {
         "bionic/mblen.cpp",
         "bionic/mbrtoc16.cpp",
         "bionic/mbrtoc32.cpp",
-        "bionic/mempcpy.cpp",
         "bionic/memset_explicit.cpp",
         "bionic/mkdir.cpp",
         "bionic/mkfifo.cpp",
@@ -925,10 +1063,10 @@ cc_library_static {
         "bionic/socketpair.cpp",
         "bionic/spawn.cpp",
         "bionic/stat.cpp",
-        "bionic/stdlib_l.cpp",
         "bionic/strerror.cpp",
-        "bionic/string_l.cpp",
+        "bionic/string.cpp",
         "bionic/strsignal.cpp",
+        "bionic/strtod.cpp",
         "bionic/strtol.cpp",
         "bionic/strtold.cpp",
         "bionic/swab.cpp",
@@ -963,7 +1101,6 @@ cc_library_static {
         "bionic/vdso.cpp",
         "bionic/wait.cpp",
         "bionic/wchar.cpp",
-        "bionic/wchar_l.cpp",
         "bionic/wcstod.cpp",
         "bionic/wctype.cpp",
         "bionic/wcwidth.cpp",
@@ -972,7 +1109,6 @@ cc_library_static {
         // TODO: finish cleanup.
         "stdio/fmemopen.cpp",
         "stdio/parsefloat.c",
-        "stdio/refill.c",
         "stdio/stdio.cpp",
         "stdio/stdio_ext.cpp",
         "stdio/vfscanf.cpp",
@@ -1037,6 +1173,10 @@ cc_library_static {
                 "arch-arm64/oryon/memset-nt.S",
                 "arch-arm64/oryon/memset-nt-simd.S",
             ],
+            whole_static_libs: [
+                "libc_bionic_portable_simd_arm64_neon_no_mte",
+                "libc_bionic_portable_simd_arm64_neon_mte",
+            ],
         },
 
         riscv64: {
@@ -1053,15 +1193,17 @@ cc_library_static {
                 "arch-riscv64/string/memmove.S",
                 "arch-riscv64/string/memset.S",
                 "arch-riscv64/string/stpcpy.S",
+                "arch-riscv64/string/stpncpy.S",
                 "arch-riscv64/string/strcat.S",
                 "arch-riscv64/string/strchr.S",
+                "arch-riscv64/string/strchrnul.S",
                 "arch-riscv64/string/strcmp.S",
                 "arch-riscv64/string/strcpy.S",
                 "arch-riscv64/string/strlen.S",
                 "arch-riscv64/string/strncat.S",
                 "arch-riscv64/string/strncmp.S",
-                "arch-riscv64/string/strncpy.S",
                 "arch-riscv64/string/strnlen.S",
+                "arch-riscv64/string/strrchr.S",
             ],
         },
 
@@ -1103,18 +1245,24 @@ cc_library_static {
 
                 "arch-x86_64/string/avx2-memmove-kbl.S",
                 "arch-x86_64/string/avx2-memset-kbl.S",
+                "arch-x86_64/string/memccpy.S",
                 "arch-x86_64/string/sse2-memmove-slm.S",
                 "arch-x86_64/string/sse2-memset-slm.S",
                 "arch-x86_64/string/sse2-stpcpy-slm.S",
                 "arch-x86_64/string/sse2-stpncpy-slm.S",
                 "arch-x86_64/string/sse2-strcat-slm.S",
                 "arch-x86_64/string/sse2-strcpy-slm.S",
-                "arch-x86_64/string/sse2-strlen-slm.S",
                 "arch-x86_64/string/sse2-strncat-slm.S",
                 "arch-x86_64/string/sse2-strncpy-slm.S",
                 "arch-x86_64/string/sse4-memcmp-slm.S",
                 "arch-x86_64/string/ssse3-strcmp-slm.S",
                 "arch-x86_64/string/ssse3-strncmp-slm.S",
+                "arch-x86_64/string/strchr.S",
+                "arch-x86_64/string/strrchr.S",
+            ],
+            whole_static_libs: [
+                "libc_bionic_portable_simd_x86_64_v2",
+                "libc_bionic_portable_simd_x86_64_v3",
             ],
         },
     },
@@ -1197,7 +1345,6 @@ genrule {
 cc_library_static {
     name: "libc_syscalls",
     defaults: ["libc_defaults"],
-    srcs: ["bionic/__set_errno.cpp"],
     arch: {
         arm: {
             srcs: [":syscalls-arm"],
@@ -1339,7 +1486,21 @@ cc_library_static {
     whole_static_libs: [
         "libc_common",
         "libc_dynamic_dispatch",
+        "libbionic_panic_abort",
+        "liblibc_alloc_rust",
     ],
+
+    target: {
+        linux_bionic: {
+            exclude_static_libs: [
+                "libbionic_panic_abort",
+                "liblibc_alloc_rust",
+            ],
+            whole_static_libs: [
+                "libstd",
+            ],
+        },
+    },
 }
 
 // Versions of dl_iterate_phdr and similar APIs used to lookup unwinding information in a static
@@ -1417,6 +1578,19 @@ filegroup {
 }
 
 // ========================================================
+// libc_sources_arc4random
+// linker_phdr dependency required by linker-unit-tests
+// ========================================================
+filegroup {
+    name: "libc_sources_arc4random",
+    defaults: ["libc_defaults"],
+    srcs: [
+        "bionic/bionic_arc4random.cpp",
+    ],
+    visibility: ["//bionic/linker"],
+}
+
+// ========================================================
 // libc.a + libc.so
 // ========================================================
 cc_defaults {
@@ -1440,6 +1614,7 @@ cc_defaults {
             "libc_init_static",
             "libc_common_static",
             "libc_unwind_static",
+            "libstd",
         ],
     },
     shared: {
@@ -1509,10 +1684,6 @@ cc_defaults {
         },
     },
 
-    apex_available: [
-        "com.android.runtime",
-    ],
-
     target: {
         native_bridge: {
             shared: {
@@ -1522,20 +1693,19 @@ cc_defaults {
     },
 }
 
-cc_library {
-    name: "libc",
+cc_defaults {
+    name: "libc_ndk_defaults",
     defaults: [
         "libc_library_defaults",
     ],
     stubs: {
-        symbol_file: "libc.map.txt",
+        symbol_file: ":stubs_libc.map.txt",
         versions: [
             "29",
             "R",
             "current",
         ],
     },
-    static_ndk_lib: true,
     llndk: {
         symbol_file: "libc.map.txt",
         export_headers_as_system: true,
@@ -1543,6 +1713,34 @@ cc_library {
     },
     afdo: true,
     lto_Instr100: true,
+}
+
+// RELEASE_DEPRECATE_RUNTIME_APEX: "# apex" should be converted to "# systemapi"
+genrule {
+    name: "stubs_libc.map.txt",
+    out: ["stubs_libc.map.txt"],
+    srcs: ["libc.map.txt"],
+    cmd: select(release_flag("RELEASE_DEPRECATE_RUNTIME_APEX"), {
+        true: "sed 's/# apex/# systemapi/g' $(in) > $(out)",
+        default: "cp $(in) $(out)",
+    }),
+}
+
+cc_library {
+    name: "libc",
+    defaults: [
+        "libc_ndk_defaults",
+    ],
+}
+
+cc_library_static {
+    name: "libc.ndk_static",
+    defaults: [
+        "libc_ndk_defaults",
+    ],
+    stem: "libc",
+    static_ndk_lib: true,
+    force_rust_staticlib: true,
 }
 
 cc_library {
@@ -1632,6 +1830,7 @@ cc_library_headers {
         "//system/core/libcutils:__subpackages__",
         "//system/memory/libmemunreachable:__subpackages__",
         "//system/unwinding/libunwindstack:__subpackages__",
+        "//system/librustutils:__subpackages__",
         "//tools/security/sanitizer-status:__subpackages__",
     ],
     vendor_available: true,
@@ -1659,10 +1858,12 @@ cc_library_headers {
     visibility: [
         "//external/musl",
         "//external/rust/crates/v4l2r/android",
+        "//system/memory/libmeminfo/libelfutils",
     ],
     llndk: {
         llndk_headers: true,
     },
+    lfi_supported: true,
     host_supported: true,
     vendor_available: true,
     product_available: true,
@@ -1712,6 +1913,12 @@ cc_library_headers {
             export_system_include_dirs: ["kernel/uapi/asm-x86"],
         },
     },
+
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
 }
 
 cc_library_headers {
@@ -1723,6 +1930,7 @@ cc_library_headers {
     ramdisk_available: true,
     vendor_ramdisk_available: true,
     recovery_available: true,
+    lfi_supported: true,
     sdk_version: "1",
 
     apex_available: [
@@ -2045,6 +2253,9 @@ cc_library_static {
             srcs: [
                 "arch-arm64/string/__memcpy_chk.S",
             ],
+            whole_static_libs: [
+                "libc_bionic_portable_simd_arm64_no_ifuncs",
+            ],
         },
         x86: {
             enabled: false,
@@ -2065,12 +2276,16 @@ cc_library_static {
                 "arch-x86_64/string/sse2-stpncpy-slm.S",
                 "arch-x86_64/string/sse2-strcat-slm.S",
                 "arch-x86_64/string/sse2-strcpy-slm.S",
-                "arch-x86_64/string/sse2-strlen-slm.S",
                 "arch-x86_64/string/sse2-strncat-slm.S",
                 "arch-x86_64/string/sse2-strncpy-slm.S",
                 "arch-x86_64/string/sse4-memcmp-slm.S",
                 "arch-x86_64/string/ssse3-strcmp-slm.S",
                 "arch-x86_64/string/ssse3-strncmp-slm.S",
+                "arch-x86_64/string/strchr.S",
+                "arch-x86_64/string/strrchr.S",
+            ],
+            whole_static_libs: [
+                "libc_bionic_portable_simd_x86_64_no_ifuncs",
             ],
         },
     },
@@ -2090,6 +2305,55 @@ cc_library_static {
     lto: {
         never: true,
     },
+}
+
+// ========================================================
+// libc dependencies for LFI projects
+// ========================================================
+
+cc_library_static {
+    name: "libc_lfi",
+    header_libs: ["libc_headers"],
+    export_header_lib_headers: [
+        "libc_headers",
+    ],
+    include_dirs: [
+        "bionic/libc/platform",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+    whole_static_libs: [
+        "libarm-optimized-routines-mem",
+    ],
+    system_shared_libs: [],
+    nocrt: true,
+    stl: "none",
+    lfi_supported: true,
+    arch: {
+        arm: {
+            enabled: false,
+        },
+        arm64: {
+            enabled: true,
+        },
+        x86: {
+            enabled: false,
+        },
+        x86_64: {
+            enabled: false,
+        },
+    },
+    min_sdk_version: "apex_inherit",
+    apex_available: [
+        "com.android.media.swcodec",
+    ],
+    visibility: [
+        "//external/libopus:__subpackages__",
+        "//system/lfi:__subpackages__",
+        "//build/soong:__subpackages__",
+    ],
 }
 
 // ========================================================
@@ -2195,12 +2459,18 @@ ndk_library {
     name: "libc",
     symbol_file: "libc.map.txt",
     first_version: "9",
+    // This runtime library does not depend on ART at all, so it simply gets an
+    // empty denylist.
+    bypass_artless_denylist: true,
 }
 
 ndk_library {
     name: "libstdc++",
     symbol_file: "libstdc++.map.txt",
     first_version: "9",
+    // This runtime library does not depend on ART at all, so it simply gets an
+    // empty denylist.
+    bypass_artless_denylist: true,
 }
 
 // Export these headers for toolbox to process

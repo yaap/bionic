@@ -36,6 +36,8 @@
 
 #include <arm_sme.h>
 
+extern "C" void __arm_tpidr2_restore(uint64_t blk);
+
 // Detects whether FEAT_SME is available.
 //
 // FEAT_SME is optional from Armv9.2.
@@ -85,6 +87,13 @@
   __asm__ __volatile__(".arch_extension sme; bti c; mrs x0, SVCR; ret;");
 }
 
+// Reads Streaming SVE vector size in bytes.
+//
+// Requires FEAT_SME, which is optional from Armv9.2.
+[[maybe_unused]] __attribute__((naked)) static uint16_t sme_get_svl() {
+  __asm__ __volatile__(".arch_extension sme; bti c; rdsvl x0, 1; ret;");
+}
+
 // Returns true if PSTATE.SM is 1, otherwise false.
 //
 // Requires FEAT_SME, which is optional from Armv9.2.
@@ -120,6 +129,7 @@
     // Bytes 8-9: num_za_save_slices
     // Other bytes are cleared.
     "stp      x9, x8, [fp, #-16]\n\r"
+    "sub      x9, fp, #16\n\r"
     // Finalize the lazy-save buffer.
     "msr      TPIDR2_EL0, x9\n\r"
     // Call the given function with dormant SME state.
@@ -133,6 +143,23 @@
     "ret\n\r"
   );
   // clang-format on
+}
+
+// 'buf' is an 'svl'*'svl' size ZA save buffer (must be aligned to 16 bytes).
+[[maybe_unused]] static void sme_enable_za_active_state(uint8_t* buf, uint16_t svl) {
+  // Enable PSTATE.ZA.
+  sme_enable_za();
+  // Fill za_save_buffer with some data.
+  memset(buf, 0xa, svl * svl);
+  // Restore ZA from the save buffer.
+  struct tpidr2_blk {
+    uint8_t* za_save_buffer;
+    uint16_t num_za_save_slices;
+    uint8_t pad[6];
+  } tpidr2_blk = { .za_save_buffer = buf, .num_za_save_slices = svl };
+  __arm_tpidr2_restore(reinterpret_cast<uint64_t>(&tpidr2_blk));
+  // Set TPIDR2 to 0.
+  sme_set_tpidr2_el0(0UL);
 }
 
 // Turns all SME state off.

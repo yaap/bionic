@@ -18,8 +18,43 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <concepts>
+
 #include <benchmark/benchmark.h>
 #include <util.h>
+
+template <typename R, typename S, R fn(S, int, size_t)>
+void BenchMemChr(benchmark::State& state) {
+  const size_t nbytes = state.range(0);
+  const size_t haystack_alignment = state.range(1);
+
+  std::vector<char> haystack;
+  char* haystack_aligned = GetAlignedPtrFilled(&haystack, haystack_alignment, nbytes, 'x');
+  haystack_aligned[nbytes-1] = '\0';
+
+  while (state.KeepRunning()) {
+    if (fn(haystack_aligned, 'y', nbytes) != nullptr) {
+      errx(1, "ERROR: found a byte where it should have failed.");
+    }
+  }
+
+  state.SetBytesProcessed(uint64_t(state.iterations()) * uint64_t(nbytes));
+}
+
+static void BM_string_memchr(benchmark::State& state) {
+  return BenchMemChr<void*, const void*, memchr>(state);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_memchr, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_memrchr(benchmark::State& state) {
+  // TODO: clean up the whole const-correct override situation.
+#if defined(__BIONIC__)
+  return BenchMemChr<const void*, const void*, memrchr>(state);
+#else
+  return BenchMemChr<void*, const void*, memrchr>(state);
+#endif
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_memrchr, "AT_ALIGNED_ONEBUF");
 
 static void BM_string_memcmp(benchmark::State& state) {
   const size_t nbytes = state.range(0);
@@ -56,6 +91,24 @@ static void BM_string_memcpy(benchmark::State& state) {
   state.SetBytesProcessed(uint64_t(state.iterations()) * uint64_t(nbytes));
 }
 BIONIC_BENCHMARK_WITH_ARG(BM_string_memcpy, "AT_ALIGNED_TWOBUF");
+
+static void BM_string_memccpy(benchmark::State& state) {
+  const size_t nbytes = state.range(0);
+  const size_t src_alignment = state.range(1);
+  const size_t dst_alignment = state.range(2);
+
+  std::vector<char> src;
+  std::vector<char> dst;
+  char* src_aligned = GetAlignedPtrFilled(&src, src_alignment, nbytes, 'x');
+  char* dst_aligned = GetAlignedPtr(&dst, dst_alignment, nbytes);
+
+  while (state.KeepRunning()) {
+    memccpy(dst_aligned, src_aligned, 'y', nbytes);
+  }
+
+  state.SetBytesProcessed(uint64_t(state.iterations()) * uint64_t(nbytes));
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_memccpy, "AT_ALIGNED_TWOBUF");
 
 static void BM_string_memmove_non_overlapping(benchmark::State& state) {
   const size_t nbytes = state.range(0);
@@ -135,6 +188,22 @@ static void BM_string_strlen(benchmark::State& state) {
   state.SetBytesProcessed(uint64_t(state.iterations()) * uint64_t(nbytes));
 }
 BIONIC_BENCHMARK_WITH_ARG(BM_string_strlen, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strnlen(benchmark::State& state) {
+  const size_t nbytes = state.range(0);
+  const size_t alignment = state.range(1);
+
+  std::vector<char> buf;
+  char* buf_aligned = GetAlignedPtrFilled(&buf, alignment, nbytes + 1, 'x');
+  buf_aligned[nbytes - 1] = '\0';
+
+  while (state.KeepRunning()) {
+    benchmark::DoNotOptimize(strnlen(buf_aligned, nbytes));
+  }
+
+  state.SetBytesProcessed(uint64_t(state.iterations()) * uint64_t(nbytes));
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strnlen, "AT_ALIGNED_ONEBUF");
 
 static void BM_string_strcat_copy_only(benchmark::State& state) {
   const size_t nbytes = state.range(0);
@@ -292,7 +361,9 @@ static void BM_string_strstr(benchmark::State& state) {
 }
 BIONIC_BENCHMARK_WITH_ARG(BM_string_strstr, "AT_ALIGNED_TWOBUF");
 
-static void BM_string_strchr(benchmark::State& state) {
+template <typename Fn>
+  requires std::invocable<Fn, char*, int>
+void BenchStrChr(benchmark::State& state, Fn strchr_fn) {
   const size_t nbytes = state.range(0);
   const size_t haystack_alignment = state.range(1);
 
@@ -301,11 +372,141 @@ static void BM_string_strchr(benchmark::State& state) {
   haystack_aligned[nbytes-1] = '\0';
 
   while (state.KeepRunning()) {
-    if (strchr(haystack_aligned, 'y') != nullptr) {
-      errx(1, "ERROR: strchr found a chr where it should have failed.");
+    if (strchr_fn(haystack_aligned, 'y') != nullptr) {
+      errx(1, "ERROR: found a char that wasn't there.");
     }
   }
 
   state.SetBytesProcessed(uint64_t(state.iterations()) * uint64_t(nbytes));
 }
+
+static void BM_string_strchr(benchmark::State& state) {
+  BenchStrChr(state, [](const char* s, int c) { return strchr(s, c); });
+}
 BIONIC_BENCHMARK_WITH_ARG(BM_string_strchr, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strrchr(benchmark::State& state) {
+  BenchStrChr(state, [](const char* s, int c) { return strrchr(s, c); });
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strrchr, "AT_ALIGNED_ONEBUF");
+
+#if defined(__BIONIC__)
+static void BM_string_strchr_chk(benchmark::State& state) {
+  const size_t nbytes = state.range(0);
+  BenchStrChr(state, [nbytes](const char* s, int c) { return __strchr_chk(s, c, nbytes); });
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strchr_chk, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strrchr_chk(benchmark::State& state) {
+  const size_t nbytes = state.range(0);
+  BenchStrChr(state, [nbytes](const char* s, int c) { return __strrchr_chk(s, c, nbytes); });
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strrchr_chk, "AT_ALIGNED_ONEBUF");
+#endif  // __BIONIC__
+
+template <typename T, T fn(const char*, const char*)>
+void BenchStrSpn(benchmark::State& state, const char* delims) {
+  const size_t nbytes = state.range(0);
+  const size_t haystack_alignment = state.range(1);
+
+  std::vector<char> haystack;
+  char* haystack_aligned = GetAlignedPtrFilled(&haystack, haystack_alignment, nbytes, 'x');
+  haystack_aligned[nbytes-1] = '\0';
+
+  while (state.KeepRunning()) {
+    benchmark::DoNotOptimize(fn(haystack_aligned, delims));
+  }
+
+  state.SetBytesProcessed(uint64_t(state.iterations()) * uint64_t(nbytes));
+}
+
+// The common strpbrk()/strcspn()/strsep() case is a single delimiter.
+// We choose one that causes us to scan the whole input, and is a real-world example.
+static constexpr char strcspn_common_case[] = ",";
+// The somewhat common strpbrk()/strcspn()/strsep() case is two delimiters.
+// We choose ones that cause us to scan the whole input, and are a real-world example.
+static constexpr char strcspn_medium_case[] = " \t";
+// It's rare to have lots of delimiters with strpbrk()/strcspn()/strsep().
+// We choose ones that cause us to scan the whole input, and are a real-world example (from curl).
+static constexpr char strcspn_rare_case[] = " \r\n\t/:#?!@{}[]\\$\'\"^`*<>=;,+&()%";
+
+static void BM_string_strpbrk_common(benchmark::State& state) {
+  BenchStrSpn<char*, strpbrk>(state, strcspn_common_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strpbrk_common, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strpbrk_medium(benchmark::State& state) {
+  BenchStrSpn<char*, strpbrk>(state, strcspn_medium_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strpbrk_medium, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strpbrk_rare(benchmark::State& state) {
+  BenchStrSpn<char*, strpbrk>(state, strcspn_rare_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strpbrk_rare, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strcspn_common(benchmark::State& state) {
+  BenchStrSpn<size_t, strcspn>(state, strcspn_common_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strcspn_common, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strcspn_medium(benchmark::State& state) {
+  BenchStrSpn<size_t, strcspn>(state, strcspn_medium_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strcspn_medium, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strcspn_rare(benchmark::State& state) {
+  BenchStrSpn<size_t, strcspn>(state, strcspn_rare_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strcspn_rare, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strspn_common(benchmark::State& state) {
+  // The common strspn() case is a couple of delimiters.
+  // We choose ones that cause us to scan the whole input,
+  // but real-world delimiters would require more realistic input.
+  BenchStrSpn<size_t, strspn>(state, "xx");
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strspn_common, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strspn_medium(benchmark::State& state) {
+  // The somewhat strspn() common case is something like "digits".
+  // Rather than write a more complicated benchmark,
+  // we just have ten instances of the same character that causes us to scan the whole input.
+  // (A sufficiently clever implementation might require a cleverer benchmark, but YAGNI.)
+  BenchStrSpn<size_t, strspn>(state, "xxxxxxxxxx");
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strspn_medium, "AT_ALIGNED_ONEBUF");
+
+// strsep() is basically the same as strcspn()/strpbrk()/strspn(),
+// so we reuse the same delimiters,
+// but the interface is different enough that we have this copy & paste.
+void BenchStrSep(benchmark::State& state, const char* delims) {
+  const size_t nbytes = state.range(0);
+  const size_t haystack_alignment = state.range(1);
+
+  std::vector<char> haystack;
+  char* haystack_aligned = GetAlignedPtrFilled(&haystack, haystack_alignment, nbytes, 'x');
+  haystack_aligned[nbytes-1] = '\0';
+
+  while (state.KeepRunning()) {
+    char* s = haystack_aligned;
+    benchmark::DoNotOptimize(strsep(&s, delims));
+  }
+
+  state.SetBytesProcessed(uint64_t(state.iterations()) * uint64_t(nbytes));
+}
+
+static void BM_string_strsep_common(benchmark::State& state) {
+  BenchStrSep(state, strcspn_common_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strsep_common, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strsep_medium(benchmark::State& state) {
+  BenchStrSep(state, strcspn_medium_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strsep_medium, "AT_ALIGNED_ONEBUF");
+
+static void BM_string_strsep_rare(benchmark::State& state) {
+  BenchStrSep(state, strcspn_rare_case);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_string_strsep_rare, "AT_ALIGNED_ONEBUF");

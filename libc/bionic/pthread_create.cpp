@@ -45,6 +45,7 @@
 #include "platform/bionic/page.h"
 #include "private/ErrnoRestorer.h"
 #include "private/ScopedRWLock.h"
+#include "private/bionic_arc4random.h"
 #include "private/bionic_constants.h"
 #include "private/bionic_defs.h"
 #include "private/bionic_globals.h"
@@ -105,23 +106,25 @@ static void __init_alternate_signal_stack(pthread_internal_t* thread) {
   }
 #endif
   void* stack_base = mmap(nullptr, SIGNAL_STACK_SIZE, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (stack_base != MAP_FAILED) {
-    // Create a guard to catch stack overflows in signal handlers.
-    if (mprotect(stack_base, PTHREAD_GUARD_SIZE, PROT_NONE) == -1) {
-      munmap(stack_base, SIGNAL_STACK_SIZE);
-      return;
-    }
-    stack_t ss;
-    ss.ss_sp = reinterpret_cast<uint8_t*>(stack_base) + PTHREAD_GUARD_SIZE;
-    ss.ss_size = SIGNAL_STACK_SIZE - PTHREAD_GUARD_SIZE;
-    ss.ss_flags = 0;
-    sigaltstack(&ss, nullptr);
-    thread->alternate_signal_stack = stack_base;
-
-    // We can only use const static allocated string for mapped region name, as Android kernel
-    // uses the string pointer directly when dumping /proc/pid/maps.
-    prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, ss.ss_sp, ss.ss_size, "thread signal stack");
+  if (stack_base == MAP_FAILED) {
+    async_safe_fatal("failed to allocate signal stack: %m");
   }
+
+  // Create a guard to catch stack overflows in signal handlers.
+  if (mprotect(stack_base, PTHREAD_GUARD_SIZE, PROT_NONE) == -1) {
+    async_safe_fatal("signal stack guard mprotect(%p, %zu) failed: %m", stack_base, PTHREAD_GUARD_SIZE);
+  }
+
+  stack_t ss;
+  ss.ss_sp = reinterpret_cast<uint8_t*>(stack_base) + PTHREAD_GUARD_SIZE;
+  ss.ss_size = SIGNAL_STACK_SIZE - PTHREAD_GUARD_SIZE;
+  ss.ss_flags = 0;
+  sigaltstack(&ss, nullptr);
+  thread->alternate_signal_stack = stack_base;
+
+  // We can only use const static allocated string for mapped region name, as Android kernel
+  // uses the string pointer directly when dumping /proc/pid/maps.
+  prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, ss.ss_sp, ss.ss_size, "thread signal stack");
 }
 
 static void __init_shadow_call_stack(pthread_internal_t* thread __unused) {
@@ -140,10 +143,9 @@ static void __init_shadow_call_stack(pthread_internal_t* thread __unused) {
       reinterpret_cast<char*>(__builtin_align_up(reinterpret_cast<uintptr_t>(scs_guard_region), SCS_SIZE));
 
   // We need to ensure that [scs_offset,scs_offset+SCS_SIZE) is in the guard region and that there
-  // is at least one unmapped page after the shadow call stack (to catch stack overflows). We can't
-  // use arc4random_uniform in init because /dev/urandom might not have been created yet.
+  // is at least one unmapped page after the shadow call stack (to catch stack overflows).
   size_t scs_offset =
-      (getpid() == 1) ? 0 : (arc4random_uniform(SCS_GUARD_REGION_SIZE / SCS_SIZE - 1) * SCS_SIZE);
+      __libc_arc4random_uniform_or_zero(SCS_GUARD_REGION_SIZE / SCS_SIZE - 1) * SCS_SIZE;
 
   // Make the stack read-write, and store its address in the register we're using as the shadow
   // stack pointer. This is deliberately the only place where the address is stored.
@@ -322,7 +324,7 @@ static int __allocate_thread(pthread_attr_t* attr, bionic_tcb** tcbp, void** chi
   if (!stack_clean) {
     // If thread was not allocated by mmap(), it may not have been cleared to zero.
     // So assume the worst and zero it.
-    memset(thread, 0, sizeof(pthread_internal_t));
+    *thread = {};
   }
 
   // Locate static TLS structures within the mapped region.

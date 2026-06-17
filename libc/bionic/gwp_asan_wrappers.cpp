@@ -129,6 +129,15 @@ void* gwp_asan_realloc(void* old_mem, size_t bytes) {
   return prev_dispatch->realloc(old_mem, bytes);
 }
 
+void* gwp_asan_reallocarray(void* old_mem, size_t item_count, size_t item_size) {
+  size_t new_size;
+  if (__builtin_mul_overflow(item_count, item_size, &new_size)) {
+    errno = ENOMEM;
+    return nullptr;
+  }
+  return gwp_asan_realloc(old_mem, new_size);
+}
+
 int gwp_asan_malloc_iterate(uintptr_t base, size_t size,
                             void (*callback)(uintptr_t base, size_t size, void* arg), void* arg) {
   if (__predict_false(GuardedAlloc.pointerIsMine(reinterpret_cast<void*>(base)))) {
@@ -162,6 +171,7 @@ const MallocDispatch gwp_asan_dispatch __attribute__((unused)) = {
     Malloc(pvalloc),
 #endif
     gwp_asan_realloc,
+    gwp_asan_reallocarray,
 #if defined(HAVE_DEPRECATED_MALLOC_FUNCS)
     Malloc(valloc),
 #endif
@@ -181,7 +191,7 @@ bool ShouldGwpAsanSampleProcess(unsigned sample_rate) {
   }
 
   uint8_t random_number;
-  __libc_safe_arc4random_buf(&random_number, sizeof(random_number));
+  __libc_arc4random_buf_or_die(&random_number, sizeof(random_number));
   return random_number % sample_rate == 0;
 }
 

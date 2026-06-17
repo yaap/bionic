@@ -52,6 +52,7 @@
 #define SERIAL_DIRTY(serial) ((serial)&1)
 #define SERIAL_VALUE_LEN(serial) ((serial) >> 24)
 #define APPCOMPAT_PREFIX "ro.appcompat_override."
+#define APPCOMPAT_OVERRIDE_ENV_VAR "BIONIC_APPCOMPAT_OVERRIDE"
 
 static bool is_dir(const char* pathname) {
   struct stat info;
@@ -74,6 +75,10 @@ bool SystemProperties::Init(const char* filename) {
 
   if (!InitContexts(false)) {
     return false;
+  }
+
+  if (getenv(APPCOMPAT_OVERRIDE_ENV_VAR) != nullptr) {
+    use_appcompat_override_ = true;
   }
 
   initialized_ = true;
@@ -137,12 +142,13 @@ bool SystemProperties::AreaInit(const char* filename, bool* fsetxattr_failed,
   return true;
 }
 
-bool SystemProperties::Reload(bool load_default_path) {
-  if (!initialized_) {
-    return true;
-  }
-
-  return InitContexts(load_default_path);
+bool SystemProperties::EnableOverrides() {
+  CHECK(initialized_);
+  use_appcompat_override_ = true;
+  // this putenv is safe as it's only called in the single-threaded zygote and aims to send info
+  // to the child processes only
+  putenv(const_cast<char*>(APPCOMPAT_OVERRIDE_ENV_VAR "=1"));
+  return true;
 }
 
 uint32_t SystemProperties::AreaSerial() {
@@ -162,6 +168,23 @@ uint32_t SystemProperties::AreaSerial() {
 const prop_info* SystemProperties::Find(const char* name) {
   if (!initialized_) {
     return nullptr;
+  }
+
+  // if appcompat override is enabled, we first try finding APPCOMPAT_PREFIXed system
+  // property
+  if (use_appcompat_override_) {
+    const size_t totalLength = strlen(APPCOMPAT_PREFIX) + strlen(name) + 1;
+    char overrideName[totalLength];
+
+    snprintf(overrideName, totalLength, "%s%s", APPCOMPAT_PREFIX, name);
+
+    prop_area* pa = contexts_->GetPropAreaForName(overrideName);
+    if (pa) {
+      const prop_info* pi = pa->find(overrideName);
+      if (pi) {
+        return pi;
+      }
+    }
   }
 
   prop_area* pa = contexts_->GetPropAreaForName(name);

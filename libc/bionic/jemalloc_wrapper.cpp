@@ -114,7 +114,7 @@ int je_mallopt(int param, int value) {
       }
     }
     return 1;
-  } else if (param == M_PURGE || param == M_PURGE_ALL) {
+  } else if (param == M_PURGE || param == M_PURGE_ALL || param == M_PURGE_FAST) {
     // Only clear the current thread cache since there is no easy way to
     // clear the caches of other threads.
     // This must be done first so that cleared allocations get purged
@@ -195,4 +195,16 @@ int je_malloc_info(int options, FILE* fp) {
   }
 
   return 0;
+}
+
+void* je_reallocarray(void* old_mem, size_t item_count, size_t item_size) {
+  size_t new_size;
+  if (__builtin_mul_overflow(item_count, item_size, &new_size)) {
+    async_safe_format_log(ANDROID_LOG_WARN, "jemalloc",
+                          "reallocarray(%p, %zu, %zu) failed: returning null pointer", old_mem,
+                          item_count, item_size);
+    errno = ENOMEM;
+    return nullptr;
+  }
+  return je_realloc(old_mem, new_size);
 }

@@ -41,6 +41,7 @@
 #include <sys/vfs.h>
 #include <unistd.h>
 
+#include <cstdint>
 #include <iterator>
 #include <new>
 #include <string>
@@ -75,6 +76,7 @@
 #include "android-base/macros.h"
 #include "android-base/stringprintf.h"
 #include "android-base/strings.h"
+#include "private/bionic_arc4random.h"
 #include "private/bionic_asm_note.h"
 #include "private/bionic_call_ifunc_resolver.h"
 #include "private/bionic_globals.h"
@@ -650,6 +652,7 @@ class LoadTask {
       si_->set_compat_code_start(elf_reader.compat_code_start());
       si_->set_compat_code_size(elf_reader.compat_code_size());
     }
+    si_->set_note_gnu_property(elf_reader.note_gnu_property());
 
     return true;
   }
@@ -1530,11 +1533,8 @@ static bool find_library_internal(android_namespace_t* ns,
 static void soinfo_unload(soinfo* si);
 
 static void shuffle(std::vector<LoadTask*>* v) {
-  if (is_first_stage_init()) {
-    // arc4random* is not available in first stage init because /dev/random
-    // hasn't yet been created.
-    return;
-  }
+  if (!__libc_arc4random_ready()) return;
+
   for (size_t i = 0, size = v->size(); i < size; ++i) {
     size_t n = size - i;
     size_t r = arc4random_uniform(n);
@@ -2359,6 +2359,26 @@ bool do_dlsym(void* handle,
     uint32_t type = ELF_ST_TYPE(sym->st_info);
 
     if ((bind == STB_GLOBAL || bind == STB_WEAK) && sym->st_shndx != 0) {
+      // EPAN means that sections might be marked unreadable. check that
+      // the symbol resides in a readable section.
+
+      auto section_readable = [sym, found]() {
+        for (size_t i = 0; i < found->phnum; ++i) {
+          if (found->phdr[i].p_type == PT_LOAD) {
+            uint64_t start_addr = found->phdr[i].p_vaddr + found->load_bias;
+            uint64_t end_addr = start_addr + found->phdr[i].p_memsz;
+            uint64_t sym_addr = found->resolve_symbol_address(sym);
+            if (sym_addr >= start_addr && sym_addr < end_addr) {
+              if (!(found->phdr[i].p_flags & PF_R)) {
+                return false;
+              }
+              break;
+            }
+          }
+        }
+        return true;
+      };
+
       if (type == STT_TLS) {
         // For a TLS symbol, dlsym returns the address of the current thread's
         // copy of the symbol.
@@ -2370,7 +2390,7 @@ bool do_dlsym(void* handle,
         }
         void* tls_block = get_tls_block_for_this_thread(tls_module, /*should_alloc=*/true);
         *symbol = static_cast<char*>(tls_block) + sym->st_value;
-      } else if (__libc_mte_enabled()) {
+      } else if (__libc_mte_enabled() && section_readable()) {
         *symbol = get_tagged_address(reinterpret_cast<void*>(found->resolve_symbol_address(sym)));
       } else {
         *symbol = reinterpret_cast<void*>(found->resolve_symbol_address(sym));
@@ -2469,7 +2489,7 @@ std::vector<std::string> fix_lib_paths(std::vector<std::string> paths) {
   // For the bootstrap linker, insert /system/${LIB}/bootstrap in front of /system/${LIB} in any
   // namespace search path. The bootstrap linker should prefer to use the bootstrap bionic libraries
   // (e.g. libc.so).
-#if !defined(__ANDROID_APEX__)
+#if !defined(RELEASE_DEPRECATE_RUNTIME_APEX) && !defined(__ANDROID_APEX__)
   for (size_t i = 0; i < paths.size(); ++i) {
     if (paths[i] == kSystemLibDir) {
       paths.insert(paths.begin() + i, std::string(kSystemLibDir) + "/bootstrap");
@@ -3464,23 +3484,6 @@ bool soinfo::protect_relro() {
 
   if (phdr_table_protect_gnu_relro(phdr, phnum, load_bias, should_pad_segments_) < 0) {
     DL_ERR("can't enable GNU RELRO protection for \"%s\": %m", get_realpath());
-    return false;
-  }
-
-  return true;
-}
-
-bool soinfo::protect_16kib_app_compat_code() {
-  if (!should_use_16kib_app_compat_) {
-    return true;
-  }
-
-  auto note_gnu_property = GnuPropertySection(this);
-  if (phdr_table_protect_16kib_app_compat_code(compat_code_start_, compat_code_size_,
-                                               should_16kib_app_compat_use_rwx_,
-                                               &note_gnu_property) < 0) {
-    DL_ERR("failed to set execute permission for compat loaded binary \"%s\": %s", get_realpath(),
-           strerror(errno));
     return false;
   }
 

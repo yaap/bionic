@@ -31,36 +31,46 @@
 // pid_t __bionic_clone(int flags, void* child_stack, pid_t* parent_tid, void* tls, pid_t* child_tid, int (*fn)(void*), void* arg);
 
 ENTRY_PRIVATE(__bionic_clone)
-  # Push 'fn' and 'arg' onto the child stack.
-  addi a1, a1, -16
-  sd a5, 0(a1)
-  sd a6, 8(a1)
-
   # Make the system call.
   li a7, __NR_clone
   ecall
 
   # Are we the child?
-  beqz a0, L(child)
+  beqz a0, L(bc_child)
 
-  # Did the clone(2) fail?
-  bltz a0, L(failure)
-  # Nope, we're the parent, and our work here is done.
-  ret
+  # We're either the parent or the syscall failed.
+  DO_SYSCALL_RETURN
 
-L(failure):
-  # Set errno if something went wrong.
-  neg a0, a0
-  tail __set_errno_internal
-
-L(child):
+L(bc_child):
   # We're in the child now. Set the end of the frame record chain.
   li fp, 0
   # Setting ra to 0 will make the unwinder stop at __start_thread.
   li ra, 0
-  # Call __start_thread with the 'fn' and 'arg' we stored on the child stack.
-  ld a0, 0(sp)
-  ld a1, 8(sp)
-  addi sp, sp, 16
+  # Call __start_thread with 'fn' and 'arg'.
+  mv a0, a5
+  mv a1, a6
   tail __start_thread
 END(__bionic_clone)
+
+// pid_t __bionic_clone3(struct clone_args* cl_args, size_t size, int (*fn)(void*), void* arg);
+ENTRY_PRIVATE(__bionic_clone3)
+  # Make the system call.
+  li a7, __NR_clone3
+  ecall
+
+  # Are we the child?
+  beqz a0, L(bc3_child)
+
+  # We're either the parent or the syscall failed.
+  DO_SYSCALL_RETURN
+
+L(bc3_child):
+  # We're in the child now. Set the end of the frame record chain.
+  li fp, 0
+  # Setting ra to 0 will make the unwinder stop at __start_thread.
+  li ra, 0
+  # Call __start_thread with the 'fn' and 'arg' stored in a2 and a3.
+  mv a0, a2
+  mv a1, a3
+  tail __start_thread
+END(__bionic_clone3)

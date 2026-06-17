@@ -18,24 +18,24 @@
 
 #include <sys/vfs.h>
 
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <string>
 
+#include <meminfo/kernel_page_size.h>
 #include "utils.h"
 
 template <typename StatFsT> void Check(StatFsT& sb) {
-#if defined(__x86_64__)
-  // On x86_64 based 16kb page size targets, the page size in userspace is simulated to 16kb but
-  // the underlying filesystem block size would remain unchanged, i.e., 4kb.
+  // On x86_64 based 16kb page size targets, the page size in userspace is simulated
+  // to 16kb but the underlying filesystem block size would remain the same as the
+  // underlying kernel page size. On all other targets the kernel page size is the
+  // same as the userspace page size.
   // For more info:
   // https://source.android.com/docs/core/architecture/16kb-page-size/getting-started-cf-x86-64-pgagnostic
-  EXPECT_EQ(4096, static_cast<int>(sb.f_bsize));
-#else
-  EXPECT_EQ(getpagesize(), static_cast<int>(sb.f_bsize));
-#endif
+  EXPECT_EQ(::android::meminfo::kernel_page_size(), static_cast<int>(sb.f_bsize));
   EXPECT_EQ(0U, sb.f_bfree);
   EXPECT_EQ(0U, sb.f_ffree);
   EXPECT_EQ(255, static_cast<int>(sb.f_namelen));
@@ -67,9 +67,7 @@ TEST(sys_vfs, statfs) {
 
 TEST(sys_vfs, statfs_failure) {
   struct statfs sb;
-  errno = 0;
-  ASSERT_EQ(-1, statfs("/does-not-exist", &sb));
-  ASSERT_ERRNO(ENOENT);
+  ASSERT_ERRNO_FAILURE(ENOENT, -1, statfs("/does-not-exist", &sb));
 }
 
 TEST(sys_vfs, statfs64_smoke) {
@@ -80,9 +78,7 @@ TEST(sys_vfs, statfs64_smoke) {
 
 TEST(sys_vfs, statfs64_failure) {
   struct statfs64 sb;
-  errno = 0;
-  ASSERT_EQ(-1, statfs64("/does-not-exist", &sb));
-  ASSERT_ERRNO(ENOENT);
+  ASSERT_ERRNO_FAILURE(ENOENT, -1, statfs64("/does-not-exist", &sb));
 }
 
 TEST(sys_vfs, fstatfs) {
@@ -95,9 +91,7 @@ TEST(sys_vfs, fstatfs) {
 
 TEST(sys_vfs, fstatfs_failure) {
   struct statfs sb;
-  errno = 0;
-  ASSERT_EQ(-1, fstatfs(-1, &sb));
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, -1, fstatfs(-1, &sb));
 }
 
 TEST(sys_vfs, fstatfs64_smoke) {
@@ -110,7 +104,5 @@ TEST(sys_vfs, fstatfs64_smoke) {
 
 TEST(sys_vfs, fstatfs64_failure) {
   struct statfs sb;
-  errno = 0;
-  ASSERT_EQ(-1, fstatfs(-1, &sb));
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, -1, fstatfs(-1, &sb));
 }

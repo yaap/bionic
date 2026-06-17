@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <thread>
 
 #include <android-base/file.h>
 #include <android-base/silent_death_test.h>
@@ -92,8 +93,7 @@ TEST(UNISTD_TEST, brk) {
 }
 
 TEST(UNISTD_TEST, brk_ENOMEM) {
-  ASSERT_EQ(-1, brk(reinterpret_cast<void*>(-1)));
-  ASSERT_ERRNO(ENOMEM);
+  ASSERT_ERRNO_FAILURE(ENOMEM, -1, brk(reinterpret_cast<void*>(-1)));
 }
 
 #if defined(__GLIBC__)
@@ -125,19 +125,16 @@ TEST(UNISTD_TEST, sbrk_ENOMEM) {
   __bionic_brk = reinterpret_cast<void*>(static_cast<uintptr_t>(PTRDIFF_MAX) + 2);
 
   // Can't increase by so much that we'd overflow.
-  ASSERT_EQ(reinterpret_cast<void*>(-1), sbrk(PTRDIFF_MAX));
-  ASSERT_ERRNO(ENOMEM);
+  ASSERT_ERRNO_FAILURE(ENOMEM, reinterpret_cast<void*>(-1), sbrk(PTRDIFF_MAX));
 
   // Set the current break to a point that will cause an overflow.
   __bionic_brk = reinterpret_cast<void*>(static_cast<uintptr_t>(PTRDIFF_MAX));
 
-  ASSERT_EQ(reinterpret_cast<void*>(-1), sbrk(PTRDIFF_MIN));
-  ASSERT_ERRNO(ENOMEM);
+  ASSERT_ERRNO_FAILURE(ENOMEM, reinterpret_cast<void*>(-1), sbrk(PTRDIFF_MIN));
 
   __bionic_brk = reinterpret_cast<void*>(static_cast<uintptr_t>(PTRDIFF_MAX) - 1);
 
-  ASSERT_EQ(reinterpret_cast<void*>(-1), sbrk(PTRDIFF_MIN + 1));
-  ASSERT_ERRNO(ENOMEM);
+  ASSERT_ERRNO_FAILURE(ENOMEM, reinterpret_cast<void*>(-1), sbrk(PTRDIFF_MIN + 1));
 #else
   class ScopedBrk {
   public:
@@ -217,9 +214,7 @@ TEST(UNISTD_TEST, ftruncate64_smoke) {
 
 TEST(UNISTD_TEST, ftruncate_negative) {
   TemporaryFile tf;
-  errno = 0;
-  ASSERT_EQ(-1, ftruncate(tf.fd, -123));
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, ftruncate(tf.fd, -123));
 }
 
 static bool g_pause_test_flag = false;
@@ -254,8 +249,7 @@ TEST(UNISTD_TEST, read_EBADF) {
   // read returns ssize_t which is 64-bits on LP64, so it's worth explicitly checking that
   // our syscall stubs correctly return a 64-bit -1.
   char buf[1];
-  ASSERT_EQ(-1, read(-1, buf, sizeof(buf)));
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, -1, read(-1, buf, sizeof(buf)));
 }
 
 TEST(UNISTD_TEST, syscall_long) {
@@ -281,6 +275,67 @@ TEST(UNISTD_TEST, _exit) {
   AssertChildExited(pid, 99);
 }
 
+TEST(UNISTD_TEST, getenv_null_environ) {
+  environ = nullptr;
+  EXPECT_EQ(nullptr, getenv("foo"));
+}
+
+TEST(UNISTD_TEST, putenv_null_environ) {
+  environ = nullptr;
+  EXPECT_EQ(0, putenv(const_cast<char*>("foo=bar")));
+  EXPECT_STREQ("bar", getenv("foo"));
+}
+
+TEST(UNISTD_TEST, setenv_null_environ) {
+  environ = nullptr;
+  EXPECT_EQ(0, setenv("foo", "bar", 0));
+  EXPECT_STREQ("bar", getenv("foo"));
+}
+
+TEST(UNISTD_TEST, unsetenv_null_environ) {
+  environ = nullptr;
+  EXPECT_EQ(0, unsetenv("foo"));
+}
+
+TEST(UNISTD_TEST, getenv_non_stack_environ) {
+  char* e[] = { const_cast<char*>("foo=xxx"), nullptr };
+  environ = e;
+  EXPECT_STREQ("xxx", getenv("foo"));
+  EXPECT_STREQ(nullptr, getenv("bar"));
+}
+
+TEST(UNISTD_TEST, putenv_non_stack_environ) {
+  char* e[] = { const_cast<char*>("foo=xxx"), nullptr };
+  environ = e;
+  EXPECT_EQ(0, putenv(const_cast<char*>("bar=yyy")));
+  EXPECT_STREQ("xxx", getenv("foo"));
+  EXPECT_STREQ("yyy", getenv("bar"));
+}
+
+TEST(UNISTD_TEST, setenv_non_stack_environ) {
+  char* e[] = { const_cast<char*>("foo=xxx"), nullptr };
+  environ = e;
+  EXPECT_EQ(0, setenv("bar", "yyy", 1));
+  EXPECT_STREQ("xxx", getenv("foo"));
+  EXPECT_STREQ("yyy", getenv("bar"));
+}
+
+TEST(UNISTD_TEST, unsetenv_non_stack_environ) {
+  char* e[] = { const_cast<char*>("foo=xxx"), nullptr };
+  environ = e;
+  EXPECT_EQ(0, unsetenv("foo"));
+  EXPECT_EQ(nullptr, getenv("foo"));
+}
+
+TEST(UNISTD_TEST, getenv_EINVAL) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnonnull"
+  EXPECT_ERRNO_FAILURE(EINVAL, nullptr, getenv(nullptr));
+#pragma clang diagnostic pop
+  EXPECT_ERRNO_FAILURE(EINVAL, nullptr, getenv(""));
+  EXPECT_ERRNO_FAILURE(EINVAL, nullptr, getenv("a=b"));
+}
+
 TEST(UNISTD_TEST, getenv_unsetenv) {
   ASSERT_EQ(0, setenv("test-variable", "hello", 1));
   ASSERT_STREQ("hello", getenv("test-variable"));
@@ -289,28 +344,24 @@ TEST(UNISTD_TEST, getenv_unsetenv) {
 }
 
 TEST(UNISTD_TEST, unsetenv_EINVAL) {
-  EXPECT_EQ(-1, unsetenv(""));
-  EXPECT_ERRNO(EINVAL);
-  EXPECT_EQ(-1, unsetenv("a=b"));
-  EXPECT_ERRNO(EINVAL);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnonnull"
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, unsetenv(nullptr));
+#pragma clang diagnostic pop
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, unsetenv(""));
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, unsetenv("a=b"));
 }
 
 TEST(UNISTD_TEST, setenv_EINVAL) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnonnull"
-  EXPECT_EQ(-1, setenv(nullptr, "value", 0));
-  EXPECT_ERRNO(EINVAL);
-  EXPECT_EQ(-1, setenv(nullptr, "value", 1));
-  EXPECT_ERRNO(EINVAL);
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, setenv(nullptr, "value", 0));
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, setenv(nullptr, "value", 1));
 #pragma clang diagnostic pop
-  EXPECT_EQ(-1, setenv("", "value", 0));
-  EXPECT_ERRNO(EINVAL);
-  EXPECT_EQ(-1, setenv("", "value", 1));
-  EXPECT_ERRNO(EINVAL);
-  EXPECT_EQ(-1, setenv("a=b", "value", 0));
-  EXPECT_ERRNO(EINVAL);
-  EXPECT_EQ(-1, setenv("a=b", "value", 1));
-  EXPECT_ERRNO(EINVAL);
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, setenv("", "value", 0));
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, setenv("", "value", 1));
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, setenv("a=b", "value", 0));
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, setenv("a=b", "value", 1));
 }
 
 TEST(UNISTD_TEST, setenv) {
@@ -339,6 +390,15 @@ TEST(UNISTD_TEST, setenv) {
   ASSERT_EQ(0, unsetenv("test-variable"));
 }
 
+TEST(UNISTD_TEST, putenv_EINVAL) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnonnull"
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, putenv(nullptr));
+#pragma clang diagnostic pop
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, putenv(strdup("")));
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, putenv(strdup("ab"))); // No '='.
+}
+
 TEST(UNISTD_TEST, putenv) {
   ASSERT_EQ(0, unsetenv("a"));
 
@@ -360,43 +420,105 @@ TEST(UNISTD_TEST, putenv) {
   free(s2);
 }
 
+TEST(UNISTD_TEST, putenv_mutation) {
+  char* s = strdup("foo=1");
+  ASSERT_EQ(0, putenv(s));
+  ASSERT_STREQ("1", getenv("foo"));
+
+  // putenv() stores the pointer directly in environ,
+  // so later changes to the passed-in string change the environment variable.
+  // This is a terrible idea, but we have to support it.
+  s[4] = '2';
+  ASSERT_STREQ("2", getenv("foo"));
+}
+
+TEST(UNISTD_TEST, setenv_no_mutation) {
+  char* name = strdup("foo");
+  char* value = strdup("1");
+  ASSERT_EQ(0, setenv(name, value, 1));
+
+  ASSERT_STREQ(nullptr, getenv("boo"));
+  ASSERT_STREQ("1", getenv("foo"));
+
+  // setenv() copies both strings,
+  // so later changes to the passed-in strings have no effect.
+  name[0] = 'b';
+  value[0] = '2';
+
+  ASSERT_STREQ(nullptr, getenv("boo"));
+  ASSERT_STREQ("1", getenv("foo"));
+}
+
 TEST(UNISTD_TEST, clearenv) {
   extern char** environ;
 
-  // Guarantee that environ is not initially empty...
-  ASSERT_EQ(0, setenv("test-variable", "a", 1));
+  environ = nullptr;
+  ASSERT_EQ(0, setenv("clearenv-test", "foo", 1));
+  ASSERT_NE(nullptr, environ);
+  ASSERT_STREQ("foo", getenv("clearenv-test"));
 
-  // Stash a copy.
-  std::vector<char*> old_environ;
-  for (size_t i = 0; environ[i] != nullptr; ++i) {
-    old_environ.push_back(strdup(environ[i]));
-  }
+  char** old_environ = environ;
+  ASSERT_STREQ("clearenv-test=foo", old_environ[0]);
+  ASSERT_EQ(nullptr, old_environ[1]);
 
   ASSERT_EQ(0, clearenv());
 
-  EXPECT_TRUE(environ == nullptr || environ[0] == nullptr);
-  EXPECT_EQ(nullptr, getenv("test-variable"));
-  EXPECT_EQ(0, setenv("test-variable", "post-clear", 1));
-  EXPECT_STREQ("post-clear", getenv("test-variable"));
+  // After clearenv(), environ is null...
+  ASSERT_EQ(nullptr, environ);
+  // ...and pointers _in_ the old environ have been nulled too.
+  ASSERT_EQ(nullptr, old_environ[0]);
+  ASSERT_EQ(nullptr, old_environ[1]);
+}
 
-  // Put the old environment back.
-  for (size_t i = 0; i < old_environ.size(); ++i) {
-    EXPECT_EQ(0, putenv(old_environ[i]));
-  }
+// It's safe to call clearenv() if environ is already null.
+TEST(UNISTD_TEST, clearenv_null_environ) {
+  extern char** environ;
+  environ = nullptr;
+  ASSERT_EQ(0, clearenv());
+}
 
-  // Check it wasn't overwritten.
-  EXPECT_STREQ("a", getenv("test-variable"));
-
-  EXPECT_EQ(0, unsetenv("test-variable"));
+TEST(UNISTD_TEST, environ_concurrency) {
+  // Number of rounds chosen by experiment to reliably ensure crashes
+  // with implementations without locking.
+  // 1k was flaky, so this an order of magnitude larger.
+  // Note that this test crashes for lack of _write_ locks ---
+  // it catches cases where putenv() and setenv() both reallocate at
+  // the same time, but does not catch cases where getenv() is iterating
+  // over freed memory unless you have hwasan or MTE.
+  static constexpr size_t N = 10'000;
+  std::thread getenv_thread{[]() {
+    for (size_t i = 0; i < N; ++i) {
+      // Deliberately not one of the variables we're setting,
+      // so getenv() is forced to traverse the whole environ array.
+      android::base::DoNotOptimize(getenv("FOO"));
+    }
+  }};
+  // Both our mutator threads use a unique variable name every time
+  // to ensure that the existing environ array needs to be reallocated.
+  std::thread putenv_thread{[]() {
+    for (size_t i = 0; i < N; ++i) {
+      char assignment[128];
+      snprintf(assignment, sizeof(assignment), "PUTENV%zu=%zu", i, i);
+      android::base::DoNotOptimize(putenv(strdup(assignment)));
+    }
+  }};
+  std::thread setenv_thread{[]() {
+    for (size_t i = 0; i < N; ++i) {
+      char name[128];
+      snprintf(name, sizeof(name), "SETENV%zu", i);
+      android::base::DoNotOptimize(setenv(name, "123", 1));
+    }
+  }};
+  getenv_thread.join();
+  putenv_thread.join();
+  setenv_thread.join();
 }
 
 static void TestSyncFunction(int (*fn)(int)) {
   int fd;
 
   // Can't sync an invalid fd.
-  errno = 0;
-  EXPECT_EQ(-1, fn(-1));
-  EXPECT_ERRNO(EBADF);
+  EXPECT_ERRNO_FAILURE(EBADF, -1, fn(-1));
 
   // It doesn't matter whether you've opened a file for write or not.
   TemporaryFile tf;
@@ -425,8 +547,7 @@ static void TestFsyncFunction(int (*fn)(int)) {
   errno = 0;
   int fd = open("/proc/version", O_RDONLY);
   ASSERT_NE(-1, fd);
-  EXPECT_EQ(-1, fn(fd));
-  EXPECT_ERRNO(EINVAL);
+  EXPECT_ERRNO_FAILURE(EINVAL, -1, fn(fd));
   close(fd);
 }
 
@@ -764,9 +885,7 @@ TEST(UNISTD_TEST, gethostname) {
   ASSERT_GT(strlen(hostname), 0U);
 
   // Do we correctly detect truncation?
-  errno = 0;
-  ASSERT_EQ(-1, gethostname(hostname, strlen(hostname)));
-  ASSERT_ERRNO(ENAMETOOLONG);
+  ASSERT_ERRNO_FAILURE(ENAMETOOLONG, -1, gethostname(hostname, strlen(hostname)));
 }
 
 TEST(UNISTD_TEST, pathconf_fpathconf) {
@@ -1243,9 +1362,7 @@ TEST(UNISTD_TEST, dup2_same) {
   ASSERT_EQ(0, close(fd)); // Check that dup2 didn't close fd.
 
   // Equal, but invalid.
-  errno = 0;
-  ASSERT_EQ(-1, dup2(fd, fd));
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, -1, dup2(fd, fd));
 }
 
 TEST(UNISTD_TEST, dup3) {
@@ -1335,12 +1452,10 @@ TEST(UNISTD_TEST, lockf_with_child) {
   if (pid == 0) {
     // Check that the child cannot lock the file.
     ASSERT_EQ(0, lseek64(tf.fd, 0, SEEK_SET));
-    ASSERT_EQ(-1, lockf64(tf.fd, F_TLOCK, file_size));
-    ASSERT_ERRNO(EAGAIN);
+    ASSERT_ERRNO_FAILURE(EAGAIN, -1, lockf64(tf.fd, F_TLOCK, file_size));
     // Check also that it reports itself as locked.
     ASSERT_EQ(0, lseek64(tf.fd, 0, SEEK_SET));
-    ASSERT_EQ(-1, lockf64(tf.fd, F_TEST, file_size));
-    ASSERT_ERRNO(EACCES);
+    ASSERT_ERRNO_FAILURE(EACCES, -1, lockf64(tf.fd, F_TEST, file_size));
     _exit(0);
   }
   AssertChildExited(pid, 0);
@@ -1365,12 +1480,10 @@ TEST(UNISTD_TEST, lockf_partial_with_child) {
     ASSERT_EQ(0, lockf64(tf.fd, F_TLOCK, file_size/2));
     // Check that the child cannot lock the first half.
     ASSERT_EQ(0, lseek64(tf.fd, 0, SEEK_SET));
-    ASSERT_EQ(-1, lockf64(tf.fd, F_TEST, file_size/2));
-    ASSERT_ERRNO(EACCES);
+    ASSERT_ERRNO_FAILURE(EACCES, -1, lockf64(tf.fd, F_TEST, file_size/2));
     // Check also that it reports itself as locked.
     ASSERT_EQ(0, lseek64(tf.fd, 0, SEEK_SET));
-    ASSERT_EQ(-1, lockf64(tf.fd, F_TEST, file_size/2));
-    ASSERT_ERRNO(EACCES);
+    ASSERT_ERRNO_FAILURE(EACCES, -1, lockf64(tf.fd, F_TEST, file_size/2));
     _exit(0);
   }
   AssertChildExited(pid, 0);
@@ -1391,8 +1504,7 @@ TEST(UNISTD_TEST, getdomainname) {
 
 #if defined(__BIONIC__)
   // bionic and glibc have different behaviors when len is too small
-  ASSERT_EQ(-1, getdomainname(buf, strlen(u.domainname)));
-  EXPECT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, getdomainname(buf, strlen(u.domainname)));
 #endif
 }
 
@@ -1414,8 +1526,7 @@ TEST(UNISTD_TEST, setdomainname) {
   }
 
   const char* name = "newdomainname";
-  ASSERT_EQ(-1, setdomainname(name, strlen(name)));
-  ASSERT_ERRNO(EPERM);
+  ASSERT_ERRNO_FAILURE(EPERM, -1, setdomainname(name, strlen(name)));
 
   if (has_admin) {
     ASSERT_EQ(0, capset(&header, &old_caps[0])) << "failed to restore admin privileges";
@@ -1424,14 +1535,13 @@ TEST(UNISTD_TEST, setdomainname) {
 
 TEST(UNISTD_TEST, execve_failure) {
   ExecTestHelper eth;
-  errno = 0;
-  ASSERT_EQ(-1, execve("/", eth.GetArgs(), eth.GetEnv()));
-  ASSERT_ERRNO(EACCES);
+  ASSERT_ERRNO_FAILURE(EACCES, -1, execve("/", eth.GetArgs(), eth.GetEnv()));
 }
 
 static void append_llvm_cov_env_var(std::string& env_str) {
-  if (getenv("LLVM_PROFILE_FILE") != nullptr)
+  if (getenv("LLVM_PROFILE_FILE") != nullptr) {
     env_str.append("__LLVM_PROFILE_RT_INIT_ONCE=__LLVM_PROFILE_RT_INIT_ONCE\n");
+  }
 }
 
 TEST(UNISTD_TEST, execve_args) {
@@ -1454,9 +1564,7 @@ TEST(UNISTD_TEST, execve_args) {
 }
 
 TEST(UNISTD_TEST, execl_failure) {
-  errno = 0;
-  ASSERT_EQ(-1, execl("/", "/", nullptr));
-  ASSERT_ERRNO(EACCES);
+  ASSERT_ERRNO_FAILURE(EACCES, -1, execl("/", "/", nullptr));
 }
 
 TEST(UNISTD_TEST, execl) {
@@ -1467,9 +1575,7 @@ TEST(UNISTD_TEST, execl) {
 
 TEST(UNISTD_TEST, execle_failure) {
   ExecTestHelper eth;
-  errno = 0;
-  ASSERT_EQ(-1, execle("/", "/", nullptr, eth.GetEnv()));
-  ASSERT_ERRNO(EACCES);
+  ASSERT_ERRNO_FAILURE(EACCES, -1, execle("/", "/", nullptr, eth.GetEnv()));
 }
 
 TEST(UNISTD_TEST, execle) {
@@ -1486,9 +1592,7 @@ TEST(UNISTD_TEST, execle) {
 
 TEST(UNISTD_TEST, execv_failure) {
   ExecTestHelper eth;
-  errno = 0;
-  ASSERT_EQ(-1, execv("/", eth.GetArgs()));
-  ASSERT_ERRNO(EACCES);
+  ASSERT_ERRNO_FAILURE(EACCES, -1, execv("/", eth.GetArgs()));
 }
 
 TEST(UNISTD_TEST, execv) {
@@ -1499,9 +1603,7 @@ TEST(UNISTD_TEST, execv) {
 }
 
 TEST(UNISTD_TEST, execlp_failure) {
-  errno = 0;
-  ASSERT_EQ(-1, execlp("/", "/", nullptr));
-  ASSERT_ERRNO(EACCES);
+  ASSERT_ERRNO_FAILURE(EACCES, -1, execlp("/", "/", nullptr));
 }
 
 TEST(UNISTD_TEST, execlp) {
@@ -1513,9 +1615,7 @@ TEST(UNISTD_TEST, execlp) {
 TEST(UNISTD_TEST, execvp_failure) {
   ExecTestHelper eth;
   eth.SetArgs({nullptr});
-  errno = 0;
-  ASSERT_EQ(-1, execvp("/", eth.GetArgs()));
-  ASSERT_ERRNO(EACCES);
+  ASSERT_ERRNO_FAILURE(EACCES, -1, execvp("/", eth.GetArgs()));
 }
 
 TEST(UNISTD_TEST, execvp) {
@@ -1563,17 +1663,13 @@ TEST(UNISTD_TEST, execvpe_ENOEXEC) {
   eth.SetArgs({basename(tf.path), nullptr});
 
   // It's not inherently executable.
-  errno = 0;
-  ASSERT_EQ(-1, execvpe(basename(tf.path), eth.GetArgs(), eth.GetEnv()));
-  ASSERT_ERRNO(EACCES);
+  ASSERT_ERRNO_FAILURE(EACCES, -1, execvpe(basename(tf.path), eth.GetArgs(), eth.GetEnv()));
 
   // Make it executable (and keep it writable because we're going to rewrite it below).
   ASSERT_EQ(0, chmod(tf.path, 0777));
 
   // TemporaryFile will have a writable fd, so we can test ETXTBSY while we're here...
-  errno = 0;
-  ASSERT_EQ(-1, execvpe(basename(tf.path), eth.GetArgs(), eth.GetEnv()));
-  ASSERT_ERRNO(ETXTBSY);
+  ASSERT_ERRNO_FAILURE(ETXTBSY, -1, execvpe(basename(tf.path), eth.GetArgs(), eth.GetEnv()));
 
   // 1. The simplest test: the kernel should handle this.
   ASSERT_EQ(0, close(tf.fd));
@@ -1592,9 +1688,7 @@ TEST(UNISTD_TEST, execvp_libcore_test_55017) {
   ExecTestHelper eth;
   eth.SetArgs({"/system/bin/does-not-exist", nullptr});
 
-  errno = 0;
-  ASSERT_EQ(-1, execvp("/system/bin/does-not-exist", eth.GetArgs()));
-  ASSERT_ERRNO(ENOENT);
+  ASSERT_ERRNO_FAILURE(ENOENT, -1, execvp("/system/bin/does-not-exist", eth.GetArgs()));
 }
 
 TEST(UNISTD_TEST, exec_argv0_null) {
@@ -1617,19 +1711,15 @@ TEST(UNISTD_TEST, exec_argv0_null) {
 
 TEST(UNISTD_TEST, fexecve_failure) {
   ExecTestHelper eth;
-  errno = 0;
   int fd = open("/", O_RDONLY);
   ASSERT_NE(-1, fd);
-  ASSERT_EQ(-1, fexecve(fd, eth.GetArgs(), eth.GetEnv()));
-  ASSERT_ERRNO(EACCES);
+  ASSERT_ERRNO_FAILURE(EACCES, -1, fexecve(fd, eth.GetArgs(), eth.GetEnv()));
   close(fd);
 }
 
 TEST(UNISTD_TEST, fexecve_bad_fd) {
   ExecTestHelper eth;
-  errno = 0;
-  ASSERT_EQ(-1, fexecve(-1, eth.GetArgs(), eth.GetEnv()));
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, -1, fexecve(-1, eth.GetArgs(), eth.GetEnv()));
 }
 
 TEST(UNISTD_TEST, fexecve_args) {
@@ -1732,8 +1822,7 @@ TEST(UNISTD_TEST, close_range) {
   ASSERT_EQ(0, rc) << strerror(errno);
 
   // Check the fd is actually closed.
-  ASSERT_EQ(close(fd), -1);
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, close(fd), -1);
 #endif  // __GLIBC__
 }
 
@@ -1755,49 +1844,93 @@ TEST(UNISTD_TEST, copy_file_range) {
 
 #if defined(__aarch64__)
 
-static bool expect_sme_off_after_fork{true};
-
-static void fork_process() {
-  const pid_t pid = fork();
+static void do_fork_process(pid_t (*fork_fn)()) {
+  pid_t pid = fork_fn();
   ASSERT_NE(-1, pid);
 
   if (pid == 0) {
-    if (expect_sme_off_after_fork) {
-      EXPECT_FALSE(sme_is_za_on());
-      EXPECT_EQ(sme_tpidr2_el0(), 0UL);
-    } else {
-      EXPECT_TRUE(sme_is_za_on());
-      EXPECT_NE(sme_tpidr2_el0(), 0UL);
-    }
-
-    exit(::testing::Test::HasFailure() ? 1 : 0);
-  } else {
-    int status;
-    ASSERT_EQ(pid, waitpid(pid, &status, 0));
-    ASSERT_TRUE(WIFEXITED(status));
-    ASSERT_EQ(0, WEXITSTATUS(status));
+    EXPECT_FALSE(sme_is_za_on());
+    EXPECT_EQ(sme_tpidr2_el0(), 0UL);
+    _exit(::testing::Test::HasFailure() ? 1 : 0);
   }
+  AssertChildExited(pid, 0);
+  EXPECT_FALSE(sme_is_za_on());
+  EXPECT_EQ(sme_tpidr2_el0(), 0UL);
 }
 
-TEST(UNISTD_TEST, fork_with_sme_off) {
+static void fork_process() { do_fork_process(fork); }
+static void vfork_process() { do_fork_process(vfork); }
+
+static void clone_process() {
+  int pid = clone(nullptr, nullptr, CLONE_CHILD_SETTID | SIGCHLD, nullptr);
+  EXPECT_NE(-1, pid);
+  if (pid == 0) {
+    EXPECT_FALSE(sme_is_za_on());
+    EXPECT_EQ(0UL, sme_tpidr2_el0());
+    _exit(::testing::Test::HasFailure() ? 1 : 0);
+  }
+  AssertChildExited(pid, 0);
+  EXPECT_FALSE(sme_is_za_on());
+  EXPECT_EQ(0UL, sme_tpidr2_el0());
+}
+
+TEST(UNISTD_TEST, fork_with_sme_za_off) {
   if (!sme_is_enabled()) {
     GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
   }
 
   __arm_za_disable();
-  expect_sme_off_after_fork = true;
   fork_process();
   sme_state_cleanup();
 }
 
-TEST(UNISTD_TEST, fork_with_sme_dormant_state) {
+TEST(UNISTD_TEST, fork_with_sme_za_dormant_state) {
   if (!sme_is_enabled()) {
     GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
   }
 
   __arm_za_disable();
-  expect_sme_off_after_fork = false;
   sme_dormant_caller(&fork_process);
+  sme_state_cleanup();
+}
+
+TEST(UNISTD_TEST, vfork_with_sme_za_off) {
+  if (!sme_is_enabled()) {
+    GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
+  }
+
+  __arm_za_disable();
+  vfork_process();
+  sme_state_cleanup();
+}
+
+TEST(UNISTD_TEST, vfork_with_sme_za_dormant_state) {
+  if (!sme_is_enabled()) {
+    GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
+  }
+
+  __arm_za_disable();
+  sme_dormant_caller(&vfork_process);
+  sme_state_cleanup();
+}
+
+TEST(UNISTD_TEST, clone_with_sme_za_off) {
+  if (!sme_is_enabled()) {
+    GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
+  }
+
+  __arm_za_disable();
+  clone_process();
+  sme_state_cleanup();
+}
+
+TEST(UNISTD_TEST, clone_with_sme_za_dormant_state) {
+  if (!sme_is_enabled()) {
+    GTEST_SKIP() << "FEAT_SME is not enabled on the device.";
+  }
+
+  __arm_za_disable();
+  sme_dormant_caller(&clone_process);
   sme_state_cleanup();
 }
 

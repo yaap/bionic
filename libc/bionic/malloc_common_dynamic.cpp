@@ -174,6 +174,10 @@ static bool InitMallocFunctions(void* impl_handler, MallocDispatch* table, const
   if (!InitMallocFunction<MallocRealloc>(impl_handler, &table->realloc, prefix, "realloc")) {
     return false;
   }
+  if (!InitMallocFunction<MallocReallocArray>(impl_handler, &table->reallocarray, prefix,
+                                              "reallocarray")) {
+    return false;
+  }
   if (!InitMallocFunction<MallocIterate>(impl_handler, &table->malloc_iterate, prefix,
                                          "malloc_iterate")) {
     return false;
@@ -283,6 +287,7 @@ extern "C" struct android_namespace_t* android_get_exported_namespace(const char
 
 void* LoadSharedLibrary(const char* shared_lib, const char* prefix, MallocDispatch* dispatch_table) {
   void* impl_handle = nullptr;
+  // TODO(b/369944471) Remove com.android.runtime support
   // Try to load the libc_malloc_* libs from the "runtime" namespace and then
   // fall back to dlopen() to load them from the default namespace.
   //

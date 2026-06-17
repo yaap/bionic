@@ -46,21 +46,18 @@ ENTRY_PRIVATE(__bionic_clone)
         movl    $__NR_clone, %eax
         syscall
 
-        # Check result.
+        # Are we the child?
         testq   %rax, %rax
         jz      L(bc_child)
-        jg      L(bc_parent)
 
-        # An error occurred, set errno and return -1.
-        negl    %eax
-        movl    %eax, %edi
-        call    __set_errno_internal
-        ret
+        # We're either the parent or the syscall failed.
+        DO_SYSCALL_RETURN
 
 L(bc_child):
         # We don't want anyone to unwind past this point.
         .cfi_undefined %rip
         .cfi_undefined %rbp
+        xorl    %ebp, %ebp
 
         # We're in the child now, so call __start_thread
         # with the arguments from the child stack moved into
@@ -69,8 +66,33 @@ L(bc_child):
         popq    %rsi  # arg
         call    __start_thread
         hlt
-
-L(bc_parent):
-        # We're the parent; nothing to do.
-        ret
 END(__bionic_clone)
+
+// pid_t __bionic_clone3(struct clone_args* cl_args, size_t size, int (*fn)(void*), void* arg);
+ENTRY_PRIVATE(__bionic_clone3)
+        # Save the arg pointer to %r8, because %rcx is clobbered by the system
+        # call.
+        movq    %rcx, %r8
+
+        # Make the system call.
+        movl    $__NR_clone3, %eax
+        syscall
+
+        # Check result.
+        testq   %rax, %rax
+        jz      L(bc3_child)
+
+        # We're either the parent or the syscall failed.
+        DO_SYSCALL_RETURN
+
+L(bc3_child):
+        # We don't want anyone to unwind past this point.
+        .cfi_undefined %rip
+        .cfi_undefined %rbp
+        xorl    %ebp, %ebp
+
+        movq    %rdx, %rdi
+        movq    %r8, %rsi
+        call    __start_thread
+        hlt
+END(__bionic_clone3)

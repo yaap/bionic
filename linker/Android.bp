@@ -1,5 +1,4 @@
 package {
-    default_team: "trendy_team_native_tools_libraries",
     default_applicable_licenses: ["bionic_linker_license"],
 }
 
@@ -14,6 +13,36 @@ license {
     ],
 }
 
+//
+// Ideally all code would support arm64's Branch Target Identification (BTI),
+// https://en.wikipedia.org/wiki/Indirect_branch_tracking
+// but we currently have legacy assembler that hasn't been updated.
+// Object files or libraries that support BTI carry an ELF note declaring their
+// support, and at link time lld rejects attempts to mix BTI and non-BTI code
+// because doing so disables BTI.
+//
+// Code that has yet to be updated can use the "no_bti" cc_defaults to tell the
+// linker to silently ignore such mismatches instead, to give the owners more
+// time to fix their code.
+//
+// See
+// https://developer.arm.com/community/arm-community-blogs/b/architectures-and-processors-blog/posts/enabling-pac-and-bti-on-aarch64
+// for a worked example of how to fix assembler.
+//
+// Note that if you apply this to a static library, you'll also need to apply
+// it to everything that links that library (because BTI applies on a
+// per-executable/per-shared object basis).
+//
+cc_defaults {
+    name: "no_bti",
+    target: {
+        android_arm64: {
+            ldflags: ["-Wl,-z,bti-report=none"],
+        },
+    },
+}
+
+// Flags used by both the linker and linker_wrapper on the host.
 linker_common_flags = [
     "-fno-stack-protector",
     "-Wstrict-overflow=5",
@@ -76,8 +105,10 @@ cc_object {
 // Configuration for the linker binary and any of its static libraries.
 cc_defaults {
     name: "linker_defaults",
-
-    cflags: linker_common_flags,
+    cflags: linker_common_flags + select(release_flag("RELEASE_DEPRECATE_RUNTIME_APEX"), {
+        true: ["-DRELEASE_DEPRECATE_RUNTIME_APEX"],
+        default: [],
+    }),
     asflags: linker_common_flags,
 
     product_variables: {
@@ -94,9 +125,10 @@ cc_defaults {
         "libz",
 
         "libasync_safe",
-
-        "liblog_for_runtime_apex",
-    ],
+    ] + select(release_flag("RELEASE_DEPRECATE_RUNTIME_APEX"), {
+        true: ["liblog"],
+        default: ["liblog_for_runtime_apex"],
+    }),
 
     // We need to access Bionic private headers in the linker.
     include_dirs: ["bionic/libc"],
@@ -133,6 +165,7 @@ cc_library_static {
     // Ensure that the compiler won't insert string function calls before ifuncs are resolved.
     cflags: ["-ffreestanding"],
     apex_available: [
+        "//apex_available:platform",
         "com.android.runtime",
     ],
 }
@@ -145,6 +178,7 @@ cc_library_static {
     ],
     srcs: ["linker_memory.cpp"],
     apex_available: [
+        "//apex_available:platform",
         "com.android.runtime",
     ],
 }
@@ -326,6 +360,11 @@ cc_defaults {
         // which is not supported in the loader.
         "libc++_static_noexcept",
 
+        // Similarly, to avoid libstd's use of ELF TLS, use
+        // direct alloc + panic providers
+        "libbionic_panic_abort",
+        "liblibc_alloc_rust",
+
         "libc_nomalloc",
         "libc_dynamic_dispatch",
         "libm",
@@ -385,6 +424,11 @@ cc_defaults {
         linux_bionic: {
             static_libs: [
                 "liblinker_debuggerd_stub",
+                "libstd",
+            ],
+            exclude_static_libs: [
+                "libbionic_panic_abort",
+                "liblibc_alloc_rust",
             ],
         },
     },
@@ -512,12 +556,15 @@ cc_test {
         "linker_dlwarning.cpp",
         "linker_phdr_16kib_compat.cpp",
         "linker_transparent_hugepage_support.cpp",
+
+        // linker_phdr.cpp dependency
+        ":libc_sources_arc4random",
     ],
 
     static_libs: [
         "libasync_safe",
         "libbase",
-        "liblog_for_runtime_apex",
+        "liblog",
         "libprocinfo", // For procinfo::MappedFileSize()
     ],
 

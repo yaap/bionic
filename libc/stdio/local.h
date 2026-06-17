@@ -65,12 +65,16 @@ struct __sFILE {
   int _lbfsize;      /* 0 or -_bf._size, for inline putc */
 
   // Function pointers used by `funopen`.
-  // Note that `_seek` is ignored if `_seek64` (in __sfileext) is set.
-  // TODO: NetBSD has `funopen2` which corrects the `int`s to `size_t`s.
-  // TODO: glibc has `fopencookie` which passes the function pointers in a struct.
+  // TODO: NetBSD has `funopen2()` which corrects the `int`s to `size_t`s.
+  // TODO: glibc and FreeBSD have `fopencookie()` which pass the function
+  // pointers in a struct (and uses `size_t` rather than `int`).
   void* _cookie; /* cookie passed to io functions */
   int (*_close)(void*);
   int (*_read)(void*, char*, int);
+  // Note that `_seek` is ignored if `_seek64` (in __sfileext) is set.
+  // TODO: only FreeBSD uses fpos_t rather than off_t; since they're the same
+  // on any OS we care about (albeit not guaranteed by POSIX) it doesn't much
+  // matter, and FreeBSD is what iOS uses, so probably best to _not_ fix that.
   fpos_t (*_seek)(void*, fpos_t, int);
   int (*_write)(void*, const char*, int);
 
@@ -84,8 +88,7 @@ struct __sFILE {
   unsigned char _ubuf[3]; // Guarantee an ungetc() buffer.
   unsigned char _nbuf[1]; // Guarantee a getc() buffer.
 
-  /* separate buffer for fgetln() when line crosses buffer boundary */
-  struct __sbuf _lb; /* buffer for fgetln() */
+  struct __sbuf fgetln_buffer;
 
   int _unused_0;  // This was the `_blksize` field (see below).
   fpos_t _unused_1;  // This was the `_offset` field (see below).
@@ -160,7 +163,7 @@ struct __sfileext {
 // #define __SOFF 0x1000 --- historical (set iff _offset is in fact correct).
 // #define __SMOD 0x2000 --- historical (set iff fgetln() returned _bf pointer).
 #define __SALC 0x4000  // Allocate string space dynamically.
-#define __SIGN 0x8000  // Ignore this file in _fwalk.
+// #define __SIGN 0x8000  // historical (ignore this file in _fwalk()).
 
 #define _EXT(fp) __BIONIC_CAST(reinterpret_cast, struct __sfileext*, (fp)->_ext._base)
 
@@ -201,7 +204,6 @@ __LIBC32_LEGACY_PUBLIC__ int _fwalk(int (*)(FILE*));
 __LIBC32_LEGACY_PUBLIC__ extern struct glue __sglue;
 
 off64_t __sseek64(void*, off64_t, int);
-int __sflush_locked(FILE*);
 void __swhatbuf(FILE*, size_t*, int*);
 wint_t __fgetwc_unlock(FILE*);
 wint_t __ungetwc(wint_t, FILE*);
@@ -249,37 +251,12 @@ struct __suio {
 int __sfvwrite(FILE*, struct __suio*);
 wint_t __fputwc_unlock(wchar_t wc, FILE* fp);
 
-/* Remove the if (!__sdidinit) __sinit() idiom from untouched upstream stdio code. */
-extern void __sinit(void);  // Not actually implemented.
-#define __sdidinit 1
-
 size_t parsefloat(FILE*, char*, char*);
 size_t wparsefloat(FILE*, wchar_t*, wchar_t*);
 
-/*
- * Floating point scanf/printf (input/output) definitions.
- */
-
-/* 11-bit exponent (VAX G floating point) is 308 decimal digits */
-#define MAXEXP 308
-/* 128 bit fraction takes up 39 decimal digits; max reasonable precision */
-#define MAXFRACT 39
-
-/*
- * MAXEXPDIG is the maximum number of decimal digits needed to store a
- * floating point exponent in the largest supported format.  It should
- * be ceil(log10(LDBL_MAX_10_EXP)) or, if hexadecimal floating point
- * conversions are supported, ceil(log10(LDBL_MAX_EXP)).  But since it
- * is presently never greater than 5 in practice, we fudge it.
- */
-#define MAXEXPDIG 6
-#if LDBL_MAX_EXP > 999999
-#error "floating point buffers too small"
-#endif
-
-char* __hdtoa(double, const char*, int, int*, int*, char**);
-char* __hldtoa(long double, const char*, int, int*, int*, char**);
-char* __ldtoa(long double*, int, int, int*, int*, char**);
+/* Remove the if (!__sdidinit) __sinit() idiom from untouched upstream stdio code. */
+extern void __sinit(void);  // Not actually implemented.
+#define __sdidinit 1
 
 #define WCIO_GET(fp) (&(_EXT(fp)->_wcio))
 

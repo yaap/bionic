@@ -77,33 +77,13 @@ libc/
       # See 'Adding system calls' later.
 
   include/
-    # The public header files on everyone's include path. These are a mixture of
-    # files written by us and files taken from BSD.
-
   kernel/
-    # The kernel uapi header files. The "libc" headers that developers actually
-    # use are a mixture of headers provided by the C library itself (which,
-    # for bionic, are in bionic/libc/include/) and headers provided by the
-    # kernel. This is because ISO C and POSIX will say things like "there is
-    # a constant called PROT_NONE" or "there is a type called struct stat,
-    # and it contains a field called st_size", but they won't necessarily say
-    # what _value_ that constant has, or what _order_ the fields in a type
-    # are in. Those are left to individual kernels' ABIs. In an effort to --
-    # amongst other things, see https://lwn.net/Articles/507794/ for more
-    # background -- reduce copy & paste, the Linux kernel makes all the types
-    # and constants that make up the "userspace API" (uapi) available as
-    # headers separate from their internal-use headers (which contain all kinds
-    # of extra stuff that isn't available to userspace). We import the latest
-    # released kernel's uapi headers in external/kernel-headers/, but we don't
-    # use those headers directly in bionic. The bionic/libc/kernel/ directory
-    # contains scrubbed copies of the originals from external/kernel-headers/.
-    # The generate_uapi_headers.sh script should be used to go from a kernel
-    # tree to external/kernel-headers/ --- this takes care of the
-    # architecture-specific details. The update_all.py script should then be
-    # used to regenerate bionic's copy from external/kernel-headers/.
-    # The files in bionic must not be edited directly because any local changes
-    # will be overwritten by the next update. "Updating kernel header files"
-    # below has more information on this process.
+    android/
+    uapi/
+      # The public header files on everyone's include path.
+      # These are a mixture of files written by us, files taken from BSD,
+      # and Linux kernel header files.
+      # See "Kernel header files" below for more on the last of those.
 
   private/
     # These are private header files meant for use within bionic itself.
@@ -134,20 +114,21 @@ libc/
         # header/source files needed by the BSD implementation.
 
   bionic/
-    # This is the biggest mess. The C++ files are files we own, typically
-    # because the Linux kernel interface is sufficiently different that we
-    # can't use any of the BSD implementations. The C files are usually
+    # This is where code we wrote lives. The C++ files are files we own,
+    # typically because the Linux kernel interface is sufficiently different
+    # that we can't use any of the BSD implementations. The C files are
     # legacy mess that needs to be sorted out, either by replacing it with
     # current upstream source in one of the upstream directories or by
     # switching the file to C++ and cleaning it up.
 
-  malloc_debug/
-    # The code that implements the functionality to enable debugging of
-    # native allocation problems.
+  memory/
+    # Glue code and utilities related to the native heap. Note that the actual
+    # heap implementation is in external/scudo/.
 
   stdio/
     # These are legacy files of dubious provenance. We're working to clean
-    # this mess up, and this directory should disappear.
+    # this mess up, and this directory should disappear when the stdio
+    # implementation moves into bionic/libc/bionic/.
 
   tools/
     # Various tools used to maintain bionic.
@@ -160,6 +141,19 @@ libc/
     # Android-format timezone data.
     # See 'Updating tzdata' later.
 ```
+
+## I can't find the implementation of a function --- where is it?
+
+System call stubs (explained in more detail below) are generated from
+SYSCALLS.TXT at build time, and not checked in.
+
+The heap implementation is in external/scudo/.
+
+Some optimized assembler string/memory and math routines for arm/arm64 are
+in external/arm-optimized-routines/ (though many -- especially for 32-bit arm --
+are in bionic).
+
+Some code also comes from external/llvm-libc/.
 
 ## Adding a new function
 
@@ -357,18 +351,36 @@ in particular to make sure you include the `GTEST_SKIP()`.)
 
 When we switch to musl for the host libc, this should be less of a problem.
 
+## Kernel header files
+
+The "libc" headers that developers actually use are a mixture of headers
+provided by the C library itself (which, for bionic, are in bionic/libc/include/)
+and headers provided by the kernel.
+
+This is because ISO C and POSIX will say things like
+"there is a constant called PROT_NONE" or
+"there is a type called struct stat, and it contains a field called st_size",
+but they won't necessarily say what _value_ that constant has,
+or what _order_ the fields in a type are in.
+Those are left to individual kernels' ABIs.
+In an effort to reduce copy & paste (amongst other things;
+see https://lwn.net/Articles/507794/ for more background),
+the Linux kernel makes all the types and constants that make up the
+"userspace API" (uapi) available as headers separate from their internal-use
+headers (which contain all kinds of extra stuff that isn't available to userspace).
+
 ## Updating kernel header files
 
-As mentioned above, this is currently a two-step process:
-
-  1. Use generate_uapi_headers.sh to go from a Linux source tree to appropriate
-     contents for external/kernel-headers/.
-  2. Run update_all.py to scrub those headers and import them into bionic.
-
 Note that if you're actually just trying to expose device-specific headers to
-build your device drivers, you shouldn't modify bionic. Instead use
-`TARGET_DEVICE_KERNEL_HEADERS` and friends described in [config.mk](https://android.googlesource.com/platform/build/+/main/core/config.mk#186).
+build your device drivers, you shouldn't modify bionic/ or
+external/kernel-headers/.
+Instead use `TARGET_DEVICE_KERNEL_HEADERS` and friends described in
+[config.mk](https://android.googlesource.com/platform/build/+/main/core/config.mk#186).
 
+Otherwise, see
+[libc/kernel/README.md](https://android.googlesource.com/platform/bionic/+/main/libc/kernel/README.md)
+for details and instructions about how to get changes to
+external/kernel-headers/ mirrored in bionic/.
 
 ## Updating tzdata
 

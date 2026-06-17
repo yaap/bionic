@@ -369,9 +369,9 @@ pthread_internal_t* __get_thread() {
 }
 
 // This one exists only for the LP32 NDK and is not present anywhere else.
-extern long __set_errno_internal(int);
 long __set_errno(int n) {
-  return __set_errno_internal(n);
+  errno = n;
+  return -1;
 }
 
 // Since dlmalloc_inspect_all and dlmalloc_trim are exported for systems
@@ -385,6 +385,12 @@ int dlmalloc_trim(size_t) {
 // LP32's <stdio.h> had putw (but not getw).
 int putw(int value, FILE* fp) {
     return fwrite(&value, sizeof(value), 1, fp) == 1 ? 0 : EOF;
+}
+
+// LP32's <stdio.h> exposed this; LP64 uses __sseek64() which is private.
+fpos_t __sseek(void* cookie, fpos_t offset, int whence) {
+  FILE* fp = reinterpret_cast<FILE*>(cookie);
+  return TEMP_FAILURE_RETRY(lseek(fileno(fp), offset, whence));
 }
 
 } // extern "C"

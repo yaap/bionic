@@ -48,9 +48,9 @@
 // 5      r15
 // 6      rsp
 // 7      pc
-// 8      sigflag/cookie  setjmp cookie in top 31 bits, signal mask flag in low bit
+// 8      sigflag/cookie  setjmp cookie in top 63 bits, signal mask flag in low bit
 // 9      sigmask         signal mask (includes rt signals as well)
-// 10     checksum        checksum of the core registers, to give better error messages.
+// 10     checksum
 
 #define _JB_RBX 0
 #define _JB_RBP 1
@@ -66,26 +66,26 @@
 
 .macro m_calculate_checksum dst, src
   movq $0, \dst
-  .irp i,0,1,2,3,4,5,6,7
+  .irp i,0,1,2,3,4,5,6,7,8,9
     xorq (\i*8)(\src), \dst
   .endr
 .endm
 
 ENTRY_WEAK_FOR_NATIVE_BRIDGE(setjmp)
   movl $1,%esi
-  jmp PIC_PLT(sigsetjmp)
+  jmp sigsetjmp
 END(setjmp)
 
 ENTRY_WEAK_FOR_NATIVE_BRIDGE(_setjmp)
   movl $0,%esi
-  jmp PIC_PLT(sigsetjmp)
+  jmp sigsetjmp
 END(_setjmp)
 
 // int sigsetjmp(sigjmp_buf env, int save_signal_mask);
 ENTRY_WEAK_FOR_NATIVE_BRIDGE(sigsetjmp)
   pushq %rdi
   movq %rsi,%rdi
-  call PIC_PLT(__bionic_setjmp_cookie_get)
+  call __bionic_setjmp_cookie_get
   popq %rdi
 
   // Record setjmp cookie and whether or not we're saving the signal mask.
@@ -94,17 +94,17 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(sigsetjmp)
 
   // Do we need to save the signal mask?
   testq $1,%rax
-  jz 2f
+  jz L(save_registers)
 
   // Save current signal mask.
   pushq %rdi // Push 'env'.
   // The 'how' argument is ignored if new_mask is NULL.
-  xorq %rsi,%rsi // NULL.
+  xorl %esi,%esi // NULL.
   leaq (_JB_SIGMASK * 8)(%rdi),%rdx // old_mask.
-  call PIC_PLT(sigprocmask)
+  call sigprocmask
   popq %rdi // Pop 'env'.
 
-2:
+L(save_registers):
   // Fetch the setjmp cookie and clear the signal flag bit.
   popq %rax
   andq $-2,%rax
@@ -135,31 +135,37 @@ END(sigsetjmp)
 
 // void siglongjmp(sigjmp_buf env, int value);
 ENTRY_WEAK_FOR_NATIVE_BRIDGE(siglongjmp)
-  movq %rdi,%r12
+  movq %rdi, %r12 // Save 'env'.
   pushq %rsi // Push 'value'.
 
+  // Check the checksum.
   m_calculate_checksum %rax, %rdi
   xorq (_JB_CHECKSUM * 8)(%rdi), %rax
-  jnz 3f
+  jnz L(checksum_failure)
+
+  // Check the cookie.
+  movq (_JB_SIGFLAG * 8)(%rdi), %rdi
+  call __bionic_setjmp_cookie_check
+  movq %r12, %rdi // Restore 'env'.
 
   // Do we need to restore the signal mask?
   movq (_JB_SIGFLAG * 8)(%rdi), %rdi
   pushq %rdi // Push cookie
   testq $1, %rdi
-  jz 2f
+  jz L(load_registers)
 
   // Restore the signal mask.
   movq $2,%rdi // SIG_SETMASK.
   leaq (_JB_SIGMASK * 8)(%r12),%rsi // new_mask.
-  xorq %rdx,%rdx // NULL.
-  call PIC_PLT(sigprocmask)
+  xorl %edx,%edx // NULL.
+  call sigprocmask
 
-2:
+L(load_registers):
   // Fetch the setjmp cookie and clear the signal flag bit.
   popq %rcx
   andq $-2, %rcx
 
-  popq %rax // Pop 'value'.
+  popq %rax // Pop 'value' before we update %rsp.
 
   // Restore the callee-save registers.
 
@@ -176,27 +182,17 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(siglongjmp)
   m_unmangle_register %r14, _JB_R14
   m_unmangle_register %r15, _JB_R15
   m_unmangle_register %rsp, _JB_RSP
-  m_unmangle_register %r11, _JB_PC
+  m_unmangle_register 0(%rsp), _JB_PC
   m_unmangle_register %r12, _JB_R12
 
-  // Check the cookie.
-  pushq %rax
-  pushq %r11
-  movq %rcx, %rdi
-  call PIC_PLT(__bionic_setjmp_cookie_check)
-  popq %r11
-  popq %rax
-
-  // Return 1 if value is 0.
-  testl %eax,%eax
-  jnz 1f
-  incl %eax
-1:
-  movq %r11,0(%rsp)
+  // Return 1 if 'value' is 0, value otherwise.
+  movq $1, %r10
+  testl %eax, %eax
+  cmovzq %r10, %rax
   ret
 
-3:
-  call PIC_PLT(__bionic_setjmp_checksum_mismatch)
+L(checksum_failure):
+  call __bionic_setjmp_checksum_mismatch
 END(siglongjmp)
 
 ALIAS_SYMBOL_WEAK_FOR_NATIVE_BRIDGE(longjmp, siglongjmp)

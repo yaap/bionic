@@ -129,6 +129,13 @@ TEST(STDIO_TEST, flockfile_18208568_stderr) {
   funlockfile(stderr);
 }
 
+TEST(STDIO_TEST, flockfile_18208568_ftrylock) {
+  // Same test but for ftrylockfile().
+  ASSERT_EQ(0, ftrylockfile(stderr));
+  ASSERT_EQ(0, feof(stderr));
+  funlockfile(stderr);
+}
+
 TEST(STDIO_TEST, flockfile_18208568_regular) {
   // We never had a bug for streams other than stdin/stdout/stderr, but test anyway.
   FILE* fp = fopen("/dev/null", "w");
@@ -138,6 +145,19 @@ TEST(STDIO_TEST, flockfile_18208568_regular) {
   // something that will take the lock.
   ASSERT_EQ(0, feof(fp));
   funlockfile(fp);
+  fclose(fp);
+}
+
+TEST(STDIO_TEST, ftrylockfile) {
+  FILE* fp = fopen("/dev/null", "w");
+  // If we lock it on this thread...
+  ASSERT_EQ(0, ftrylockfile(fp));
+
+  std::thread([=] {
+    // ...we can't lock it on another thread.
+    ASSERT_EQ(EBUSY, ftrylockfile(fp));
+  }).join();
+
   fclose(fp);
 }
 
@@ -222,9 +242,7 @@ TEST(STDIO_TEST, getdelim) {
 
   // getdelim returns -1 but doesn't set errno if we're already at EOF.
   // It should set the end-of-file indicator for the stream, though.
-  errno = 0;
-  ASSERT_EQ(getdelim(&word_read, &allocated_length, ' ', fp), -1);
-  ASSERT_ERRNO(0);
+  ASSERT_ERRNO_FAILURE(0, -1, getdelim(&word_read, &allocated_length, ' ', fp));
   ASSERT_TRUE(feof(fp));
 
   free(word_read);
@@ -241,14 +259,11 @@ TEST(STDIO_TEST, getdelim_invalid) {
   size_t buffer_length = 0;
 
   // The first argument can't be NULL.
-  errno = 0;
-  ASSERT_EQ(getdelim(nullptr, &buffer_length, ' ', fp), -1);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, getdelim(nullptr, &buffer_length, ' ', fp));
 
   // The second argument can't be NULL.
-  errno = 0;
-  ASSERT_EQ(getdelim(&buffer, nullptr, ' ', fp), -1);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, getdelim(&buffer, nullptr, ' ', fp));
+
   fclose(fp);
 #pragma clang diagnostic pop
 }
@@ -260,6 +275,20 @@ TEST(STDIO_TEST, getdelim_directory) {
   size_t allocated_length;
   ASSERT_EQ(-1, getdelim(&word_read, &allocated_length, ' ', fp));
   fclose(fp);
+}
+
+// https://sourceware.org/bugzilla/show_bug.cgi?id=28038
+TEST(STDIO_TEST, getdelim_eof_terminator) {
+  FILE* fp = tmpfile();
+  ASSERT_TRUE(fp != nullptr);
+  char* line = static_cast<char*>(malloc(1));
+  size_t allocated_length = 1;
+  *line = 'x';
+  ASSERT_EQ(-1, getdelim(&line, &allocated_length, '\n', fp));
+  EXPECT_GT(allocated_length, 0u);
+  EXPECT_EQ('\0', line[0]);
+  fclose(fp);
+  free(line);
 }
 
 TEST(STDIO_TEST, fgetln) {
@@ -296,9 +325,7 @@ TEST(STDIO_TEST, fgetln) {
 
   // fgetln() returns nullptr but doesn't set errno if we're already at EOF.
   // It should set the end-of-file indicator for the stream, though.
-  errno = 0;
-  ASSERT_EQ(fgetln(fp, &line_length), nullptr);
-  ASSERT_ERRNO(0);
+  ASSERT_ERRNO_FAILURE(0, nullptr, fgetln(fp, &line_length));
   ASSERT_TRUE(feof(fp));
 
   fclose(fp);
@@ -342,9 +369,7 @@ TEST(STDIO_TEST, getline) {
 
   // getline returns -1 but doesn't set errno if we're already at EOF.
   // It should set the end-of-file indicator for the stream, though.
-  errno = 0;
-  ASSERT_EQ(getline(&line_read, &allocated_length, fp), -1);
-  ASSERT_ERRNO(0);
+  ASSERT_ERRNO_FAILURE(0, -1, getline(&line_read, &allocated_length, fp));
   ASSERT_TRUE(feof(fp));
 
   free(line_read);
@@ -361,14 +386,11 @@ TEST(STDIO_TEST, getline_invalid) {
   size_t buffer_length = 0;
 
   // The first argument can't be NULL.
-  errno = 0;
-  ASSERT_EQ(getline(nullptr, &buffer_length, fp), -1);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, getline(nullptr, &buffer_length, fp));
 
   // The second argument can't be NULL.
-  errno = 0;
-  ASSERT_EQ(getline(&buffer, nullptr, fp), -1);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, getline(&buffer, nullptr, fp));
+
   fclose(fp);
 #pragma clang diagnostic pop
 }
@@ -506,7 +528,8 @@ TEST_F(STDIO_DEATHTEST, snprintf_n) {
   // http://b/14492135 and http://b/31832608.
   char buf[32];
   int i = 1234;
-  EXPECT_DEATH(snprintf(buf, sizeof(buf), "a %n b", &i), "%n not allowed on Android");
+  EXPECT_EXIT(snprintf(buf, sizeof(buf), "a %n b", &i),
+              testing::KilledBySignal(SIGABRT), "%n not allowed on Android");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "glibc does allow %n";
@@ -520,7 +543,8 @@ TEST_F(STDIO_DEATHTEST, swprintf_n) {
   // http://b/14492135 and http://b/31832608.
   wchar_t buf[32];
   int i = 1234;
-  EXPECT_DEATH(swprintf(buf, sizeof(buf), L"a %n b", &i), "%n not allowed on Android");
+  EXPECT_EXIT(swprintf(buf, sizeof(buf), L"a %n b", &i),
+              testing::KilledBySignal(SIGABRT), "%n not allowed on Android");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "glibc does allow %n";
@@ -538,6 +562,24 @@ TEST(STDIO_TEST, swprintf_measure) {
   wchar_t buf[1] = {L'x'};
   ASSERT_EQ(-1, swprintf(buf, 0, L"Hello %S", L"world"));
   ASSERT_EQ(L'x', buf[0]);
+}
+
+// Check snprintf does not overrun buffer when output exceeds specified size
+TEST(STDIO_TEST, snprintf_no_overrun) {
+  char buf[10] = "123456789";
+  int w = snprintf(buf, 4, "a%ib", 12345678);
+  EXPECT_EQ(10, w);
+  EXPECT_STREQ("a12", buf);
+  EXPECT_STREQ("56789", &buf[4]);
+}
+
+// Check swprintf does not overrun buffer when output exceeds specified size
+TEST(STDIO_TEST, swprintf_no_overrun) {
+  wchar_t buf[10] = L"123456789";
+  int w = swprintf(buf, 4, L"a%ib", 12345678);
+  EXPECT_EQ(-1, w);
+  EXPECT_STREQ(L"a12", buf);
+  EXPECT_STREQ(L"56789", &buf[4]);
 }
 
 TEST(STDIO_TEST, snprintf_smoke) {
@@ -784,6 +826,14 @@ TEST(STDIO_TEST, swprintf_1$ju_UINTMAX_MAX) {
   EXPECT_SWPRINTF(L"18446744073709551615", L"%1$ju", UINTMAX_MAX);
 }
 
+TEST(STDIO_TEST, snprintf_d_ZERO) {
+  EXPECT_SNPRINTF("0", "%d", 0);
+}
+
+TEST(STDIO_TEST, swprintf_d_ZERO) {
+  EXPECT_SWPRINTF(L"0", L"%d", 0);
+}
+
 TEST(STDIO_TEST, snprintf_d_INT_MAX) {
   EXPECT_SNPRINTF("2147483647", "%d", INT_MAX);
 }
@@ -848,12 +898,52 @@ TEST(STDIO_TEST, swprintf_lld_LLONG_MIN) {
   EXPECT_SWPRINTF(L"-9223372036854775808", L"%lld", LLONG_MIN);
 }
 
+TEST(STDIO_TEST, snprintf_o_ZERO) {
+  EXPECT_SNPRINTF("0", "%o", 0);
+}
+
+TEST(STDIO_TEST, swprintf_o_ZERO) {
+  EXPECT_SWPRINTF(L"0", L"%o", 0);
+}
+
 TEST(STDIO_TEST, snprintf_o_UINT_MAX) {
   EXPECT_SNPRINTF("37777777777", "%o", UINT_MAX);
 }
 
 TEST(STDIO_TEST, swprintf_o_UINT_MAX) {
   EXPECT_SWPRINTF(L"37777777777", L"%o", UINT_MAX);
+}
+
+TEST(STDIO_TEST, snprintf_o_ULONG_MAX) {
+#if defined(__LP64__)
+  EXPECT_SNPRINTF("1777777777777777777777", "%lo", ULONG_MAX);
+#else
+  EXPECT_SNPRINTF("37777777777", "%lo", ULONG_MAX);
+#endif
+}
+
+TEST(STDIO_TEST, swprintf_o_ULONG_MAX) {
+#if defined(__LP64__)
+  EXPECT_SWPRINTF(L"1777777777777777777777", L"%lo", ULONG_MAX);
+#else
+  EXPECT_SWPRINTF(L"37777777777", L"%lo", ULONG_MAX);
+#endif
+}
+
+TEST(STDIO_TEST, snprintf_o_ULLONG_MAX) {
+  EXPECT_SNPRINTF("1777777777777777777777", "%llo", ULLONG_MAX);
+}
+
+TEST(STDIO_TEST, swprintf_o_ULLONG_MAX) {
+  EXPECT_SWPRINTF(L"1777777777777777777777", L"%llo", ULLONG_MAX);
+}
+
+TEST(STDIO_TEST, snprintf_u_ZERO) {
+  EXPECT_SNPRINTF("0", "%u", 0);
+}
+
+TEST(STDIO_TEST, swprintf_u_ZERO) {
+  EXPECT_SWPRINTF(L"0", L"%u", 0);
 }
 
 TEST(STDIO_TEST, snprintf_u_UINT_MAX) {
@@ -864,6 +954,38 @@ TEST(STDIO_TEST, swprintf_u_UINT_MAX) {
   EXPECT_SWPRINTF(L"4294967295", L"%u", UINT_MAX);
 }
 
+TEST(STDIO_TEST, snprintf_u_ULONG_MAX) {
+#if defined(__LP64__)
+  EXPECT_SNPRINTF("18446744073709551615", "%lu", ULONG_MAX);
+#else
+  EXPECT_SNPRINTF("4294967295", "%lu", ULONG_MAX);
+#endif
+}
+
+TEST(STDIO_TEST, swprintf_u_ULONG_MAX) {
+#if defined(__LP64__)
+  EXPECT_SWPRINTF(L"18446744073709551615", L"%lu", ULONG_MAX);
+#else
+  EXPECT_SWPRINTF(L"4294967295", L"%lu", ULONG_MAX);
+#endif
+}
+
+TEST(STDIO_TEST, snprintf_u_ULLONG_MAX) {
+  EXPECT_SNPRINTF("18446744073709551615", "%llu", ULLONG_MAX);
+}
+
+TEST(STDIO_TEST, swprintf_u_ULLONG_MAX) {
+  EXPECT_SWPRINTF(L"18446744073709551615", L"%llu", ULLONG_MAX);
+}
+
+TEST(STDIO_TEST, snprintf_x_ZERO) {
+  EXPECT_SNPRINTF("0", "%x", 0);
+}
+
+TEST(STDIO_TEST, swprintf_x_ZERO) {
+  EXPECT_SWPRINTF(L"0", L"%x", 0);
+}
+
 TEST(STDIO_TEST, snprintf_x_UINT_MAX) {
   EXPECT_SNPRINTF("ffffffff", "%x", UINT_MAX);
 }
@@ -872,12 +994,68 @@ TEST(STDIO_TEST, swprintf_x_UINT_MAX) {
   EXPECT_SWPRINTF(L"ffffffff", L"%x", UINT_MAX);
 }
 
+TEST(STDIO_TEST, snprintf_x_ULONG_MAX) {
+#if defined(__LP64__)
+  EXPECT_SNPRINTF("ffffffffffffffff", "%lx", ULONG_MAX);
+#else
+  EXPECT_SNPRINTF("ffffffff", "%lx", ULONG_MAX);
+#endif
+}
+
+TEST(STDIO_TEST, swprintf_x_ULONG_MAX) {
+#if defined(__LP64__)
+  EXPECT_SWPRINTF(L"ffffffffffffffff", L"%lx", ULONG_MAX);
+#else
+  EXPECT_SWPRINTF(L"ffffffff", L"%lx", ULONG_MAX);
+#endif
+}
+
+TEST(STDIO_TEST, snprintf_x_ULLONG_MAX) {
+  EXPECT_SNPRINTF("ffffffffffffffff", "%llx", ULLONG_MAX);
+}
+
+TEST(STDIO_TEST, swprintf_x_ULLONG_MAX) {
+  EXPECT_SWPRINTF(L"ffffffffffffffff", L"%llx", ULLONG_MAX);
+}
+
+TEST(STDIO_TEST, snprintf_X_ZERO) {
+  EXPECT_SNPRINTF("0", "%X", 0);
+}
+
+TEST(STDIO_TEST, swprintf_X_ZERO) {
+  EXPECT_SWPRINTF(L"0", L"%X", 0);
+}
+
 TEST(STDIO_TEST, snprintf_X_UINT_MAX) {
   EXPECT_SNPRINTF("FFFFFFFF", "%X", UINT_MAX);
 }
 
 TEST(STDIO_TEST, swprintf_X_UINT_MAX) {
   EXPECT_SWPRINTF(L"FFFFFFFF", L"%X", UINT_MAX);
+}
+
+TEST(STDIO_TEST, snprintf_X_ULONG_MAX) {
+#if defined(__LP64__)
+  EXPECT_SNPRINTF("FFFFFFFFFFFFFFFF", "%lX", ULONG_MAX);
+#else
+  EXPECT_SNPRINTF("FFFFFFFF", "%lX", ULONG_MAX);
+#endif
+}
+
+TEST(STDIO_TEST, swprintf_X_ULONG_MAX) {
+#if defined(__LP64__)
+  EXPECT_SWPRINTF(L"FFFFFFFFFFFFFFFF", L"%lX", ULONG_MAX);
+#else
+  EXPECT_SWPRINTF(L"FFFFFFFF", L"%lX", ULONG_MAX);
+#endif
+}
+
+TEST(STDIO_TEST, snprintf_X_ULLONG_MAX) {
+  EXPECT_SNPRINTF("FFFFFFFFFFFFFFFF", "%llX", ULLONG_MAX);
+}
+
+TEST(STDIO_TEST, swprintf_X_ULLONG_MAX) {
+  EXPECT_SWPRINTF(L"FFFFFFFFFFFFFFFF", L"%llX", ULLONG_MAX);
 }
 
 TEST(STDIO_TEST, snprintf_e) {
@@ -966,8 +1144,7 @@ TEST(STDIO_TEST, snprintf_asterisk_overflow) {
   // INT_MAX-1, INT_MAX, INT_MAX+1.
   ASSERT_EQ(12, snprintf(buf, sizeof(buf), "%.2147483646s%c", "hello world", '!'));
   ASSERT_EQ(12, snprintf(buf, sizeof(buf), "%.2147483647s%c", "hello world", '!'));
-  ASSERT_EQ(-1, snprintf(buf, sizeof(buf), "%.2147483648s%c", "hello world", '!'));
-  ASSERT_ERRNO(ENOMEM);
+  ASSERT_ERRNO_FAILURE(ENOMEM, -1, snprintf(buf, sizeof(buf), "%.2147483648s%c", "hello world", '!'));
 }
 
 TEST(STDIO_TEST, swprintf_asterisk_overflow) {
@@ -981,8 +1158,7 @@ TEST(STDIO_TEST, swprintf_asterisk_overflow) {
   // INT_MAX-1, INT_MAX, INT_MAX+1.
   ASSERT_EQ(12, swprintf(buf, sizeof(buf), L"%.2147483646s%c", "hello world", '!'));
   ASSERT_EQ(12, swprintf(buf, sizeof(buf), L"%.2147483647s%c", "hello world", '!'));
-  ASSERT_EQ(-1, swprintf(buf, sizeof(buf), L"%.2147483648s%c", "hello world", '!'));
-  ASSERT_ERRNO(ENOMEM);
+  ASSERT_ERRNO_FAILURE(ENOMEM, -1, swprintf(buf, sizeof(buf), L"%.2147483648s%c", "hello world", '!'));
 }
 
 // Inspired by https://github.com/landley/toybox/issues/163.
@@ -1449,29 +1625,20 @@ TEST(STDIO_TEST, cantwrite_EBADF) {
   // ...all attempts to write to that file should return failure.
 
   // They should also set errno to EBADF. This isn't POSIX, but it's traditional.
+
+  EXPECT_ERRNO_FAILURE(EBADF, EOF, putc('x', fp));
+  EXPECT_ERRNO_FAILURE(EBADF, EOF, fprintf(fp, "hello"));
+
+  EXPECT_ERRNO_FAILURE(EBADF, 0U, fwrite("hello", 1, 2, fp));
+  EXPECT_ERRNO_FAILURE(EBADF, EOF, fputs("hello", fp));
+
   // glibc gets the wide-character functions wrong.
-
-  errno = 0;
-  EXPECT_EQ(EOF, putc('x', fp));
-  EXPECT_ERRNO(EBADF);
-
-  errno = 0;
-  EXPECT_EQ(EOF, fprintf(fp, "hello"));
-  EXPECT_ERRNO(EBADF);
 
   errno = 0;
   EXPECT_EQ(EOF, fwprintf(fp, L"hello"));
 #if defined(__BIONIC__)
   EXPECT_ERRNO(EBADF);
 #endif
-
-  errno = 0;
-  EXPECT_EQ(0U, fwrite("hello", 1, 2, fp));
-  EXPECT_ERRNO(EBADF);
-
-  errno = 0;
-  EXPECT_EQ(EOF, fputs("hello", fp));
-  EXPECT_ERRNO(EBADF);
 
   errno = 0;
   EXPECT_EQ(WEOF, fputwc(L'x', fp));
@@ -1590,8 +1757,7 @@ TEST(STDIO_TEST, fpos_t_and_seek) {
 #endif
 
   // Reading from within a byte should produce an error.
-  ASSERT_EQ(WEOF, fgetwc(fp));
-  ASSERT_ERRNO(EILSEQ);
+  ASSERT_ERRNO_FAILURE(EILSEQ, WEOF, fgetwc(fp));
 
   // Reverting to a valid position should work.
   ASSERT_EQ(0, fsetpos(fp, &mb_two_bytes_pos));
@@ -1600,8 +1766,7 @@ TEST(STDIO_TEST, fpos_t_and_seek) {
   // Moving withing a multi byte with fsetpos should work but reading should
   // produce an error.
   ASSERT_EQ(0, fsetpos(fp, &pos_inside_mb));
-  ASSERT_EQ(WEOF, fgetwc(fp));
-  ASSERT_ERRNO(EILSEQ);
+  ASSERT_ERRNO_FAILURE(EILSEQ, WEOF, fgetwc(fp));
 
   ASSERT_EQ(0, fclose(fp));
 }
@@ -2000,9 +2165,7 @@ TEST(STDIO_TEST, fmemopen_fileno) {
   // There's no fd backing an fmemopen FILE*.
   FILE* fp = fmemopen(nullptr, 16, "r");
   ASSERT_TRUE(fp != nullptr);
-  errno = 0;
-  ASSERT_EQ(-1, fileno(fp));
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, -1, fileno(fp));
   ASSERT_EQ(0, fclose(fp));
 }
 
@@ -2048,14 +2211,10 @@ TEST(STDIO_TEST, open_memstream_EINVAL) {
   size_t size;
 
   // Invalid buffer.
-  errno = 0;
-  ASSERT_EQ(nullptr, open_memstream(nullptr, &size));
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, open_memstream(nullptr, &size));
 
   // Invalid size.
-  errno = 0;
-  ASSERT_EQ(nullptr, open_memstream(&p, nullptr));
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, open_memstream(&p, nullptr));
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "glibc is broken";
@@ -2188,9 +2347,7 @@ TEST(STDIO_TEST, fread_EOF) {
 static void test_fread_from_write_only_stream(size_t n) {
   FILE* fp = fopen("/dev/null", "w");
   std::vector<char> buf(n, 0);
-  errno = 0;
-  ASSERT_EQ(0U, fread(&buf[0], n, 1, fp));
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, 0U, fread(&buf[0], n, 1, fp));
   ASSERT_TRUE(ferror(fp));
   ASSERT_FALSE(feof(fp));
   fclose(fp);
@@ -2341,9 +2498,7 @@ TEST(STDIO_TEST, fclose_invalidates_fd) {
   // Even though using a FILE* after close is undefined behavior, I've closed
   // this bug as "WAI" too many times. We shouldn't hand out stale fds,
   // especially because they might actually correspond to a real stream.
-  errno = 0;
-  ASSERT_EQ(-1, fileno(stdin));
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, -1, fileno(stdin));
 }
 
 TEST(STDIO_TEST, fseek_ftell_unseekable) {
@@ -2353,19 +2508,13 @@ TEST(STDIO_TEST, fseek_ftell_unseekable) {
   ASSERT_TRUE(fp != nullptr);
 
   // Check that ftell balks on an unseekable FILE*.
-  errno = 0;
-  ASSERT_EQ(-1, ftell(fp));
-  ASSERT_ERRNO(ESPIPE);
+  ASSERT_ERRNO_FAILURE(ESPIPE, -1, ftell(fp));
 
   // SEEK_CUR is rewritten as SEEK_SET internally...
-  errno = 0;
-  ASSERT_EQ(-1, fseek(fp, 0, SEEK_CUR));
-  ASSERT_ERRNO(ESPIPE);
+  ASSERT_ERRNO_FAILURE(ESPIPE, -1, fseek(fp, 0, SEEK_CUR));
 
   // ...so it's worth testing the direct seek path too.
-  errno = 0;
-  ASSERT_EQ(-1, fseek(fp, 0, SEEK_SET));
-  ASSERT_ERRNO(ESPIPE);
+  ASSERT_ERRNO_FAILURE(ESPIPE, -1, fseek(fp, 0, SEEK_SET));
 
   fclose(fp);
 #else
@@ -2375,9 +2524,7 @@ TEST(STDIO_TEST, fseek_ftell_unseekable) {
 
 TEST(STDIO_TEST, funopen_EINVAL) {
 #if defined(__BIONIC__)
-  errno = 0;
-  ASSERT_EQ(nullptr, funopen(nullptr, nullptr, nullptr, nullptr, nullptr));
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, funopen(nullptr, nullptr, nullptr, nullptr, nullptr));
 #else
   GTEST_SKIP() << "glibc uses fopencookie instead";
 #endif
@@ -2397,8 +2544,7 @@ TEST(STDIO_TEST, funopen_seek) {
   EXPECT_EQ(0, fgetpos(fp, &pos)) << strerror(errno);
   EXPECT_EQ(0xfedcba12LL, pos);
 #else
-  EXPECT_EQ(-1, fgetpos(fp, &pos)) << strerror(errno);
-  EXPECT_ERRNO(EOVERFLOW);
+  EXPECT_ERRNO_FAILURE(EOVERFLOW, -1, fgetpos(fp, &pos));
 #endif
 
   FILE* fp64 = funopen64(nullptr, read_fn, nullptr, seek64_fn, nullptr);
@@ -2498,26 +2644,14 @@ TEST(STDIO_TEST, fseek_fseeko_EINVAL) {
   FILE* fp = fdopen(tf.fd, "w+");
 
   // Bad whence.
-  errno = 0;
-  ASSERT_EQ(-1, fseek(fp, 0, 123));
-  ASSERT_ERRNO(EINVAL);
-  errno = 0;
-  ASSERT_EQ(-1, fseeko(fp, 0, 123));
-  ASSERT_ERRNO(EINVAL);
-  errno = 0;
-  ASSERT_EQ(-1, fseeko64(fp, 0, 123));
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, fseek(fp, 0, 123));
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, fseeko(fp, 0, 123));
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, fseeko64(fp, 0, 123));
 
   // Bad offset.
-  errno = 0;
-  ASSERT_EQ(-1, fseek(fp, -1, SEEK_SET));
-  ASSERT_ERRNO(EINVAL);
-  errno = 0;
-  ASSERT_EQ(-1, fseeko(fp, -1, SEEK_SET));
-  ASSERT_ERRNO(EINVAL);
-  errno = 0;
-  ASSERT_EQ(-1, fseeko64(fp, -1, SEEK_SET));
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, fseek(fp, -1, SEEK_SET));
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, fseeko(fp, -1, SEEK_SET));
+  ASSERT_ERRNO_FAILURE(EINVAL, -1, fseeko64(fp, -1, SEEK_SET));
 
   fclose(fp);
 }
@@ -2535,21 +2669,15 @@ TEST(STDIO_TEST, remove) {
 
   TemporaryFile tf;
   ASSERT_EQ(0, remove(tf.path));
-  ASSERT_EQ(-1, lstat(tf.path, &sb));
-  ASSERT_ERRNO(ENOENT);
+  ASSERT_ERRNO_FAILURE(ENOENT, -1, lstat(tf.path, &sb));
 
   TemporaryDir td;
   ASSERT_EQ(0, remove(td.path));
-  ASSERT_EQ(-1, lstat(td.path, &sb));
-  ASSERT_ERRNO(ENOENT);
+  ASSERT_ERRNO_FAILURE(ENOENT, -1, lstat(td.path, &sb));
 
-  errno = 0;
-  ASSERT_EQ(-1, remove(tf.path));
-  ASSERT_ERRNO(ENOENT);
+  ASSERT_ERRNO_FAILURE(ENOENT, -1, remove(tf.path));
 
-  errno = 0;
-  ASSERT_EQ(-1, remove(td.path));
-  ASSERT_ERRNO(ENOENT);
+  ASSERT_ERRNO_FAILURE(ENOENT, -1, remove(td.path));
 }
 
 TEST_F(STDIO_DEATHTEST, snprintf_30445072_known_buffer_size) {
@@ -2629,6 +2757,30 @@ TEST(STDIO_TEST, wprintf_m_does_not_clobber_strerror) {
   ASSERT_STREQ("Unknown error -1", m);
 }
 
+TEST(STDIO_TEST, snprintf_hash_o) {
+  EXPECT_SNPRINTF("07", "%#o", 7);
+}
+
+TEST(STDIO_TEST, swprintf_hash_o) {
+  EXPECT_SWPRINTF(L"07", L"%#o", 7);
+}
+
+TEST(STDIO_TEST, snprintf_hash_x) {
+  EXPECT_SNPRINTF("0x7", "%#x", 7);
+}
+
+TEST(STDIO_TEST, swprintf_hash_x) {
+  EXPECT_SWPRINTF(L"0x7", L"%#x", 7);
+}
+
+TEST(STDIO_TEST, snprintf_hash_X) {
+  EXPECT_SNPRINTF("0X7", "%#X", 7);
+}
+
+TEST(STDIO_TEST, swprintf_hash_X) {
+  EXPECT_SWPRINTF(L"0X7", L"%#X", 7);
+}
+
 TEST(STDIO_TEST, fopen_append_mode_and_ftell) {
   TemporaryFile tf;
   SetFileTo(tf.path, "0123456789");
@@ -2689,42 +2841,42 @@ TEST(STDIO_TEST, constants) {
 }
 
 TEST(STDIO_TEST, perror) {
-  CapturedStderr cap;
+  android::base::CapturedStderr cap;
   errno = EINVAL;
   perror("a b c");
   ASSERT_EQ(cap.str(), "a b c: Invalid argument\n");
 }
 
 TEST(STDIO_TEST, perror_null) {
-  CapturedStderr cap;
+  android::base::CapturedStderr cap;
   errno = EINVAL;
   perror(nullptr);
   ASSERT_EQ(cap.str(), "Invalid argument\n");
 }
 
 TEST(STDIO_TEST, perror_empty) {
-  CapturedStderr cap;
+  android::base::CapturedStderr cap;
   errno = EINVAL;
   perror("");
   ASSERT_EQ(cap.str(), "Invalid argument\n");
 }
 
 TEST(STDIO_TEST, puts) {
-  CapturedStdout cap;
+  android::base::CapturedStdout cap;
   puts("a b c");
   fflush(stdout);
   ASSERT_EQ(cap.str(), "a b c\n");
 }
 
 TEST(STDIO_TEST, putchar) {
-  CapturedStdout cap;
+  android::base::CapturedStdout cap;
   ASSERT_EQ(65, putchar('A'));
   fflush(stdout);
   ASSERT_EQ(cap.str(), "A");
 }
 
 TEST(STDIO_TEST, putchar_unlocked) {
-  CapturedStdout cap;
+  android::base::CapturedStdout cap;
   ASSERT_EQ(66, putchar_unlocked('B'));
   fflush(stdout);
   ASSERT_EQ(cap.str(), "B");
@@ -2797,8 +2949,7 @@ TEST(STDIO_TEST, fseek_overflow_32bit) {
   // Bionic implements overflow checking for SEEK_CUR, but glibc doesn't.
 #if defined(__BIONIC__) && !defined(__LP64__)
   ASSERT_EQ(0, fseek(fp, 0x7fff'ffff, SEEK_SET));
-  ASSERT_EQ(-1, fseek(fp, 1, SEEK_CUR));
-  ASSERT_ERRNO(EOVERFLOW);
+  ASSERT_ERRNO_FAILURE(EOVERFLOW, -1, fseek(fp, 1, SEEK_CUR));
 #endif
 
   // Neither Bionic nor glibc implement the overflow checking for SEEK_END.
@@ -2916,8 +3067,7 @@ TEST(STDIO_TEST, renameat2) {
   ASSERT_EQ(0, close(creat(old_path.c_str(), 0666)));
 
   // Rename and check it moved.
-  ASSERT_EQ(-1, renameat2(dirfd, "old", dirfd, "new", RENAME_NOREPLACE));
-  ASSERT_ERRNO(EEXIST);
+  ASSERT_ERRNO_FAILURE(EEXIST, -1, renameat2(dirfd, "old", dirfd, "new", RENAME_NOREPLACE));
 #endif
 }
 
@@ -2932,59 +3082,37 @@ TEST(STDIO_TEST, renameat2_flags) {
 }
 
 TEST(STDIO_TEST, fdopen_failures) {
-  FILE* fp;
   int fd = open("/proc/version", O_RDONLY);
   ASSERT_TRUE(fd != -1);
 
   // Nonsense mode.
-  errno = 0;
-  fp = fdopen(fd, "nonsense");
-  ASSERT_TRUE(fp == nullptr);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, fdopen(fd, "nonsense"));
 
   // Mode that isn't a subset of the fd's actual mode.
-  errno = 0;
-  fp = fdopen(fd, "w");
-  ASSERT_TRUE(fp == nullptr);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, fdopen(fd, "w"));
 
   // Can't set append on the underlying fd.
-  errno = 0;
-  fp = fdopen(fd, "a");
-  ASSERT_TRUE(fp == nullptr);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, fdopen(fd, "a"));
 
   // Bad fd.
-  errno = 0;
-  fp = fdopen(-1, "re");
-  ASSERT_TRUE(fp == nullptr);
-  ASSERT_ERRNO(EBADF);
+  ASSERT_ERRNO_FAILURE(EBADF, nullptr, fdopen(-1, "re"));
 
   close(fd);
 }
 
 TEST(STDIO_TEST, fmemopen_invalid_mode) {
-  errno = 0;
-  FILE* fp = fmemopen(nullptr, 16, "nonsense");
-  ASSERT_TRUE(fp == nullptr);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, fmemopen(nullptr, 16, "nonsense"));
 }
 
 TEST(STDIO_TEST, fopen_invalid_mode) {
-  errno = 0;
-  FILE* fp = fopen("/proc/version", "nonsense");
-  ASSERT_TRUE(fp == nullptr);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, fopen("/proc/version", "nonsense"));
 }
 
 TEST(STDIO_TEST, freopen_invalid_mode) {
   FILE* fp = fopen("/proc/version", "re");
   ASSERT_TRUE(fp != nullptr);
 
-  errno = 0;
-  fp = freopen("/proc/version", "nonsense", fp);
-  ASSERT_TRUE(fp == nullptr);
-  ASSERT_ERRNO(EINVAL);
+  ASSERT_ERRNO_FAILURE(EINVAL, nullptr, freopen("/proc/version", "nonsense", fp));
 }
 
 TEST(STDIO_TEST, asprintf_smoke) {
@@ -2994,11 +3122,18 @@ TEST(STDIO_TEST, asprintf_smoke) {
   free(p);
 }
 
+TEST(STDIO_TEST, asprintf_huge) {
+  std::string huge(2048u, 'x');
+  std::string expected = huge + " hello " + huge;
+  char* p;
+  int n = asprintf(&p, "%s hello %s", huge.c_str(), huge.c_str());
+  ASSERT_EQ(2048 + 7 + 2048, n);
+  ASSERT_STREQ(expected.c_str(), p);
+  free(p);
+}
+
 TEST(STDIO_TEST, fopen_ENOENT) {
-  errno = 0;
-  FILE* fp = fopen("/proc/does-not-exist", "re");
-  ASSERT_TRUE(fp == nullptr);
-  ASSERT_ERRNO(ENOENT);
+  ASSERT_ERRNO_FAILURE(ENOENT, nullptr, fopen("/proc/does-not-exist", "re"));
 }
 
 static void tempnam_test(bool has_TMPDIR, const char* dir, const char* prefix, const char* re) {
@@ -3103,9 +3238,7 @@ TEST(STDIO_TEST, fread_EOVERFLOW) {
 
   volatile size_t big = SIZE_MAX;
   char buf[BUFSIZ];
-  errno = 0;
-  ASSERT_EQ(0u, fread(buf, big, big, fp));
-  ASSERT_ERRNO(EOVERFLOW);
+  ASSERT_ERRNO_FAILURE(EOVERFLOW, 0u, fread(buf, big, big, fp));
   ASSERT_TRUE(ferror(fp));
   fclose(fp);
 }
@@ -3117,9 +3250,7 @@ TEST(STDIO_TEST, fwrite_EOVERFLOW) {
 
   volatile size_t big = SIZE_MAX;
   char buf[BUFSIZ];
-  errno = 0;
-  ASSERT_EQ(0u, fwrite(buf, big, big, fp));
-  ASSERT_ERRNO(EOVERFLOW);
+  ASSERT_ERRNO_FAILURE(EOVERFLOW, 0u, fwrite(buf, big, big, fp));
   ASSERT_TRUE(ferror(fp));
   fclose(fp);
 }
@@ -3453,7 +3584,8 @@ TEST_F(STDIO_DEATHTEST, snprintf_invalid_w_width) {
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   char buf[BUFSIZ];
   int32_t a = 100;
-  EXPECT_DEATH(snprintf(buf, sizeof(buf), "%w20d", &a), "%w20 is unsupported");
+  EXPECT_EXIT(snprintf(buf, sizeof(buf), "%w20d", &a),
+              testing::KilledBySignal(SIGABRT), "%w20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3466,7 +3598,8 @@ TEST_F(STDIO_DEATHTEST, swprintf_invalid_w_width) {
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   wchar_t buf[BUFSIZ];
   int32_t a = 100;
-  EXPECT_DEATH(swprintf(buf, sizeof(buf), L"%w20d", &a), "%w20 is unsupported");
+  EXPECT_EXIT(swprintf(buf, sizeof(buf), L"%w20d", &a),
+              testing::KilledBySignal(SIGABRT), "%w20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3603,7 +3736,8 @@ TEST_F(STDIO_DEATHTEST, snprintf_invalid_wf_width) {
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   char buf[BUFSIZ];
   int_fast32_t a = 100;
-  EXPECT_DEATH(snprintf(buf, sizeof(buf), "%wf20d", &a), "%wf20 is unsupported");
+  EXPECT_EXIT(snprintf(buf, sizeof(buf), "%wf20d", &a),
+              testing::KilledBySignal(SIGABRT), "%wf20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3617,7 +3751,8 @@ TEST_F(STDIO_DEATHTEST, swprintf_invalid_wf_width) {
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   wchar_t buf[BUFSIZ];
   int_fast32_t a = 100;
-  EXPECT_DEATH(swprintf(buf, sizeof(buf), L"%wf20d", &a), "%wf20 is unsupported");
+  EXPECT_EXIT(swprintf(buf, sizeof(buf), L"%wf20d", &a),
+              testing::KilledBySignal(SIGABRT), "%wf20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3715,9 +3850,11 @@ TEST_F(STDIO_DEATHTEST, sscanf_invalid_w_or_wf_width) {
 #pragma clang diagnostic ignored "-Wformat"
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   int32_t a;
-  EXPECT_DEATH(sscanf("<100>", "<%w20d>", &a), "%w20 is unsupported");
+  EXPECT_EXIT(sscanf("<100>", "<%w20d>", &a),
+              testing::KilledBySignal(SIGABRT), "%w20 is unsupported");
   int_fast32_t fast_a;
-  EXPECT_DEATH(sscanf("<100>", "<%wf20d>", &fast_a), "%wf20 is unsupported");
+  EXPECT_EXIT(sscanf("<100>", "<%wf20d>", &fast_a),
+              testing::KilledBySignal(SIGABRT), "%wf20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3815,9 +3952,11 @@ TEST_F(STDIO_DEATHTEST, swscanf_invalid_w_or_wf_width) {
 #pragma clang diagnostic ignored "-Wformat"
 #pragma clang diagnostic ignored "-Wformat-invalid-specifier"
   int32_t a;
-  EXPECT_DEATH(swscanf(L"<100>", L"<%w20d>", &a), "%w20 is unsupported");
+  EXPECT_EXIT(swscanf(L"<100>", L"<%w20d>", &a),
+              testing::KilledBySignal(SIGABRT), "%w20 is unsupported");
   int_fast32_t fast_a;
-  EXPECT_DEATH(swscanf(L"<100>", L"<%wf20d>", &fast_a), "%wf20 is unsupported");
+  EXPECT_EXIT(swscanf(L"<100>", L"<%wf20d>", &fast_a),
+              testing::KilledBySignal(SIGABRT), "%wf20 is unsupported");
 #pragma clang diagnostic pop
 #else
   GTEST_SKIP() << "no %w in glibc";
@@ -3829,4 +3968,47 @@ TEST(STDIO_TEST, printf_lc_0) {
   char buf[BUFSIZ];
   EXPECT_EQ(3, snprintf(buf, sizeof(buf), "<%lc>", L'\0'));
   EXPECT_TRUE(!memcmp(buf, "<\0>", 3));
+}
+
+// https://sourceware.org/bugzilla/show_bug.cgi?id=26557
+// TL;DR: "does open_memstream() maintain the file length correctly?"
+static void glibc_bug_26557_helper(FILE* fp) {
+  char data[32] = {};
+  EXPECT_EQ(24u, fwrite(data, 1, 24, fp));
+  EXPECT_EQ(24, ftell(fp));
+  EXPECT_EQ(0, fseek(fp, 0, SEEK_SET));
+  EXPECT_EQ(4u, fwrite(data, 1, 4, fp));
+  EXPECT_EQ(0, fseek(fp, 0, SEEK_END));
+  EXPECT_EQ(24, ftell(fp));
+  EXPECT_EQ(0, fclose(fp));
+}
+
+TEST(STDIO_TEST, glibc_bug_26557_fopen) {
+  glibc_bug_26557_helper(tmpfile());
+}
+
+TEST(STDIO_TEST, glibc_bug_26557_fmemopen) {
+  glibc_bug_26557_helper(fmemopen(nullptr, 32, "wb"));
+}
+
+TEST(STDIO_TEST, glibc_bug_26557_open_memstream) {
+  char* p = new char[32];
+  size_t size = 32;
+  glibc_bug_26557_helper(open_memstream(&p, &size));
+}
+
+TEST(STDIO_TEST, fflush_POSIX_2008) {
+  // C23 still has fflush() on a read-only stream as undefined behavior.
+  // POSIX 2008 has "For a stream open for reading with an underlying file description,
+  // if the file is not already at EOF, and the file is one capable of seeking,
+  // the file offset of the underlying open file description shall be set to the file position of the stream,
+  // and any characters pushed back onto the stream by ungetc() or ungetwc()
+  // that have not subsequently been read from the stream shall be discarded
+  // (without further changing the file offset)".
+  // It doesn't look like macOS or glibc actually implement the "discard the unget buffer" part,
+  // but all the implementations seem to agree that fflush() should return success at least.
+  FILE* fp = fopen("/proc/version", "r");
+  ASSERT_TRUE(fp != nullptr);
+  ASSERT_EQ(0, fflush(fp));
+  fclose(fp);
 }

@@ -31,7 +31,7 @@
 // pid_t __bionic_clone(int flags, void* child_stack, pid_t* parent_tid, void* tls, pid_t* child_tid, int (*fn)(void*), void* arg);
 ENTRY_PRIVATE(__bionic_clone)
     mov     ip, sp
-    # save registers to parent stack
+    # Save callee-save registers to parent stack.
     stmfd   sp!, {r4, r5, r6, r7}
     .cfi_def_cfa_offset 16
     .cfi_rel_offset r4, 0
@@ -39,11 +39,9 @@ ENTRY_PRIVATE(__bionic_clone)
     .cfi_rel_offset r6, 8
     .cfi_rel_offset r7, 12
 
-    # load extra parameters
+    # Pull 'child_tid' off the stack and into the register the kernel
+    # calling convention expects, and pull 'fn' and 'arg' for later.
     ldmfd   ip, {r4, r5, r6}
-
-    # Push 'fn' and 'arg' onto the child stack.
-    stmdb   r1!, {r5, r6}
 
     # Make the system call.
     ldr     r7, =__NR_clone
@@ -51,21 +49,49 @@ ENTRY_PRIVATE(__bionic_clone)
 
     # Are we the child?
     movs    r0, r0
-    beq     .L_bc_child
+    beq     L(bc_child)
 
     # In the parent, reload saved registers then either return or set errno.
     ldmfd   sp!, {r4, r5, r6, r7}
-    cmn     r0, #(MAX_ERRNO + 1)
-    bxls    lr
-    neg     r0, r0
-    b       __set_errno_internal
+    DO_SYSCALL_RETURN
 
-.L_bc_child:
+L(bc_child):
     # We're in the child now. Set the end of the frame record chain.
     mov    fp, #0
     # Setting lr to 0 will make the unwinder stop at __start_thread.
     mov    lr, #0
-    # Call __start_thread with the 'fn' and 'arg' we stored on the child stack.
-    pop    {r0, r1}
+    # Call __start_thread with 'fn' and 'arg'.
+    mov    r0, r5
+    mov    r1, r6
     b      __start_thread
 END(__bionic_clone)
+
+// pid_t __bionic_clone3(struct clone_args* cl_args, size_t size, int (*fn)(void*), void* arg);
+ENTRY_PRIVATE(__bionic_clone3)
+    # Save r7 to the parent stack as it is clobbered by the system call number.
+    push   {r7}
+    .cfi_def_cfa_offset 4
+    .cfi_rel_offset r7, 0
+
+    # Make the system call.
+    ldr    r7, =__NR_clone3
+    swi    #0
+
+    # Are we the child?
+    movs   r0, r0
+    beq    L(bc3_child)
+
+    # In the parent, reload saved registers then either return or set errno.
+    pop    {r7}
+    DO_SYSCALL_RETURN
+
+L(bc3_child):
+    # We're in the child now. Set the end of the frame record chain.
+    mov    fp, #0
+    # Setting lr to 0 will make the unwinder stop at __start_thread.
+    mov    lr, #0
+    # Call __start_thread with the 'fn' and 'arg'
+    mov    r0, r2
+    mov    r1, r3
+    b      __start_thread
+END(__bionic_clone3)

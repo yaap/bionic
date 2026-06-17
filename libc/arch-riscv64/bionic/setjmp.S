@@ -33,7 +33,7 @@
 // Current layout (changes from release to release):
 //
 // word   name            description
-// 0      sigflag/cookie  setjmp cookie in top 31 bits, signal mask flag in low bit
+// 0      sigflag/cookie  setjmp cookie in top 63 bits, signal mask flag in low bit
 // 1      sigmask         64-bit signal mask
 // 2      ra
 // 3      sp
@@ -133,7 +133,7 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(sigsetjmp)
 
   // Do we need to save the signal mask?
   andi a1, a1, 1
-  beqz a1, 1f
+  beqz a1, L(save_registers)
 
   // Save current signal mask.
   // The 'how'/a0 argument is ignored if set is NULL.
@@ -141,7 +141,7 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(sigsetjmp)
   addi a2, a0, _JB_SIGMASK // old_mask.
   call sigprocmask
 
-1:
+L(save_registers):
   // Restore original a0/ra.
   ld a0, 0(sp)
   ld ra, 16(sp)
@@ -210,7 +210,7 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(siglongjmp)
   // Do we need to restore the signal mask?
   ld a2, _JB_SIGFLAG(a0)
   andi a3, a2, 1
-  beqz a3, 1f
+  beqz a3, L(load_registers)
 
   addi sp, sp, -16
   sd a0, 0(sp)
@@ -232,7 +232,7 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(siglongjmp)
   addi sp, sp, 16
 
   ld a2, _JB_SIGFLAG(a0)
-1:
+L(load_registers):
   // Restore core registers.
   andi a2, a2, -2
   ld ra,  _JB_RA(a0)
@@ -283,11 +283,9 @@ ENTRY_WEAK_FOR_NATIVE_BRIDGE(siglongjmp)
   fld fs10, _JB_FS10(a0)
   fld fs11, _JB_FS11(a0)
 
-  // Set return value.
-  beqz a1, 2f
+  // Return 1 if value (in a1) is 0, value otherwise.
   li a0, 1
-2:
-  mv a0, a1
+  maxu a0, a0, a1
   ret
 
 L(checksum_failure):

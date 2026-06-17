@@ -3,13 +3,6 @@
 // ==============================================================
 // Used by libmemunreachable
 package {
-    default_team: "trendy_team_native_tools_libraries",
-    // See: http://go/android-license-faq
-    // A large-scale-change added 'default_applicable_licenses' to import
-    // all of the 'license_kinds' from "bionic_libc_license"
-    // to get the below license kinds:
-    //   SPDX-license-identifier-Apache-2.0
-    //   SPDX-license-identifier-BSD
     default_applicable_licenses: ["bionic_libc_license"],
 }
 
@@ -34,9 +27,6 @@ cc_library_static {
 
     export_include_dirs: ["."],
 
-    sanitize: {
-        never: true,
-    },
     native_coverage: false,
 
     // -Wno-error=format-zero-length needed for gcc to compile.
@@ -114,13 +104,9 @@ cc_library {
     ],
 
     apex_available: [
+        "//apex_available:platform",
         "com.android.runtime",
     ],
-    static: {
-        apex_available: [
-            "//apex_available:platform",
-        ],
-    },
 }
 
 // ==============================================================
@@ -162,18 +148,6 @@ cc_defaults {
 }
 
 cc_test {
-    name: "malloc_debug_system_record_unit_tests",
-    defaults: ["malloc_debug_tests"],
-    test_suites: ["device-tests"],
-    isolated: true,
-
-    srcs: [
-        "tests/malloc_debug_config_tests.cpp",
-        "tests/malloc_debug_record_data_tests.cpp",
-    ],
-}
-
-cc_test {
     name: "malloc_debug_unit_tests",
     defaults: ["malloc_debug_tests"],
     test_suites: ["device-tests"],
@@ -181,6 +155,8 @@ cc_test {
 
     srcs: [
         "tests/backtrace_fake.cpp",
+        "tests/malloc_debug_config_tests.cpp",
+        "tests/malloc_debug_record_data_tests.cpp",
         "tests/malloc_debug_unit_tests.cpp",
     ],
 

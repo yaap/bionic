@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include <err.h>
+#include <error.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdio_ext.h>
@@ -35,7 +35,7 @@ static void FillFile(TemporaryFile& tf) {
 }
 
 template <typename Fn>
-void ReadWriteTest(benchmark::State& state, Fn f, bool buffered) {
+void ReadWriteTest(benchmark::State& state, Fn f, const char* mode, bool buffered) {
   size_t chunk_size = state.range(0);
 
   // /dev/zero copies zeroes if you read from it and discards writes.
@@ -45,7 +45,8 @@ void ReadWriteTest(benchmark::State& state, Fn f, bool buffered) {
   // (Old versions of stdio would copy reads/writes larger than
   // the stdio buffer through the stdio buffer in chunks,
   // rather than directly to the user's destination.)
-  FILE* fp = fopen("/dev/zero", "r+e");
+  FILE* fp = fopen("/dev/zero", mode);
+  if (fp == nullptr) error(1, errno, "fopen() with mode %s failed", mode);
   __fsetlocking(fp, FSETLOCKING_BYCALLER);
   char* buf = new char[chunk_size];
 
@@ -55,7 +56,7 @@ void ReadWriteTest(benchmark::State& state, Fn f, bool buffered) {
 
   while (state.KeepRunning()) {
     if (f(buf, chunk_size, 1, fp) != 1) {
-      errx(1, "ERROR: op of %zu bytes failed.", chunk_size);
+      error(1, errno, "ERROR: transfer of %zu bytes failed", chunk_size);
     }
   }
 
@@ -65,22 +66,42 @@ void ReadWriteTest(benchmark::State& state, Fn f, bool buffered) {
 }
 
 void BM_stdio_fread(benchmark::State& state) {
-  ReadWriteTest(state, fread, true);
+  ReadWriteTest(state, fread, "re", true);
 }
 BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fread, "AT_COMMON_SIZES");
 
 void BM_stdio_fwrite(benchmark::State& state) {
-  ReadWriteTest(state, fwrite, true);
+  ReadWriteTest(state, fwrite, "we", true);
 }
 BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fwrite, "AT_COMMON_SIZES");
 
+void BM_stdio_fread_rw(benchmark::State& state) {
+  ReadWriteTest(state, fread, "r+e", true);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fread_rw, "AT_COMMON_SIZES");
+
+void BM_stdio_fwrite_rw(benchmark::State& state) {
+  ReadWriteTest(state, fwrite, "r+e", true);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fwrite_rw, "AT_COMMON_SIZES");
+
+void BM_stdio_fread_a(benchmark::State& state) {
+  ReadWriteTest(state, fread, "a+e", true);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fread_a, "AT_COMMON_SIZES");
+
+void BM_stdio_fwrite_a(benchmark::State& state) {
+  ReadWriteTest(state, fwrite, "ae", true);
+}
+BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fwrite_a, "AT_COMMON_SIZES");
+
 void BM_stdio_fread_unbuffered(benchmark::State& state) {
-  ReadWriteTest(state, fread, false);
+  ReadWriteTest(state, fread, "re", false);
 }
 BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fread_unbuffered, "AT_COMMON_SIZES");
 
 void BM_stdio_fwrite_unbuffered(benchmark::State& state) {
-  ReadWriteTest(state, fwrite, false);
+  ReadWriteTest(state, fwrite, "we", false);
 }
 BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fwrite_unbuffered, "AT_COMMON_SIZES");
 
@@ -179,58 +200,58 @@ void BM_stdio_fopen_fgetc_fclose_no_locking(benchmark::State& state) {
 }
 BIONIC_BENCHMARK_WITH_ARG(BM_stdio_fopen_fgetc_fclose_no_locking, "1024");
 
-static void BM_stdio_printf_literal(benchmark::State& state) {
+static void BM_stdio_snprintf_literal(benchmark::State& state) {
   while (state.KeepRunning()) {
     char buf[BUFSIZ];
     snprintf(buf, sizeof(buf), "this is just a literal string with no format specifiers");
   }
 }
-BIONIC_BENCHMARK(BM_stdio_printf_literal);
+BIONIC_BENCHMARK(BM_stdio_snprintf_literal);
 
-static void BM_stdio_printf_s(benchmark::State& state) {
+static void BM_stdio_snprintf_s(benchmark::State& state) {
   while (state.KeepRunning()) {
     char buf[BUFSIZ];
     snprintf(buf, sizeof(buf), "this is a more typical error message with detail: %s",
              "No such file or directory");
   }
 }
-BIONIC_BENCHMARK(BM_stdio_printf_s);
+BIONIC_BENCHMARK(BM_stdio_snprintf_s);
 
-static void BM_stdio_printf_d(benchmark::State& state) {
+static void BM_stdio_snprintf_d(benchmark::State& state) {
   while (state.KeepRunning()) {
     char buf[BUFSIZ];
     snprintf(buf, sizeof(buf), "this is a more typical error message with detail: %d", 123456);
   }
 }
-BIONIC_BENCHMARK(BM_stdio_printf_d);
+BIONIC_BENCHMARK(BM_stdio_snprintf_d);
 
-static void BM_stdio_printf_1$s(benchmark::State& state) {
+static void BM_stdio_snprintf_1$s(benchmark::State& state) {
   while (state.KeepRunning()) {
     char buf[BUFSIZ];
     snprintf(buf, sizeof(buf), "this is a more typical error message with detail: %1$s",
              "No such file or directory");
   }
 }
-BIONIC_BENCHMARK(BM_stdio_printf_1$s);
+BIONIC_BENCHMARK(BM_stdio_snprintf_1$s);
 
-static void BM_stdio_scanf_s(benchmark::State& state) {
+static void BM_stdio_sscanf_s(benchmark::State& state) {
   while (state.KeepRunning()) {
     char s[BUFSIZ];
     if (sscanf("file /etc/passwd", "file %s", s) != 1) abort();
   }
 }
-BIONIC_BENCHMARK(BM_stdio_scanf_s);
+BIONIC_BENCHMARK(BM_stdio_sscanf_s);
 
-static void BM_stdio_scanf_d(benchmark::State& state) {
+static void BM_stdio_sscanf_d(benchmark::State& state) {
   while (state.KeepRunning()) {
     int i;
     if (sscanf("size 12345", "size %d", &i) != 1) abort();
   }
 }
-BIONIC_BENCHMARK(BM_stdio_scanf_d);
+BIONIC_BENCHMARK(BM_stdio_sscanf_d);
 
 // Parsing maps is a common use of sscanf with a relatively complex format string.
-static void BM_stdio_scanf_maps(benchmark::State& state) {
+static void BM_stdio_sscanf_maps(benchmark::State& state) {
   while (state.KeepRunning()) {
     uintptr_t start;
     uintptr_t end;
@@ -242,7 +263,7 @@ static void BM_stdio_scanf_maps(benchmark::State& state) {
                &start, &end, permissions, &offset, &name_pos) != 4) abort();
   }
 }
-BIONIC_BENCHMARK(BM_stdio_scanf_maps);
+BIONIC_BENCHMARK(BM_stdio_sscanf_maps);
 
 // Hard-coded equivalent of the maps sscanf from libunwindstack/Maps.cpp for a baseline.
 static int ParseMap(const char* line, const char* /*fmt*/, uintptr_t* start, uintptr_t* end,
@@ -298,7 +319,7 @@ static int ParseMap(const char* line, const char* /*fmt*/, uintptr_t* start, uin
   return 4;
 }
 
-static void BM_stdio_scanf_maps_baseline(benchmark::State& state) {
+static void BM_stdio_sscanf_maps_baseline(benchmark::State& state) {
   while (state.KeepRunning()) {
     uintptr_t start;
     uintptr_t end;
@@ -310,4 +331,4 @@ static void BM_stdio_scanf_maps_baseline(benchmark::State& state) {
                &start, &end, permissions, &offset, &name_pos) != 4) abort();
   }
 }
-BIONIC_BENCHMARK(BM_stdio_scanf_maps_baseline);
+BIONIC_BENCHMARK(BM_stdio_sscanf_maps_baseline);
