@@ -1171,7 +1171,6 @@ cc_library_static {
                 "arch-arm64/bionic/vfork.S",
                 "arch-arm64/oryon/memcpy-nt.S",
                 "arch-arm64/oryon/memset-nt.S",
-                "arch-arm64/oryon/memset-nt-simd.S",
             ],
             whole_static_libs: [
                 "libc_bionic_portable_simd_arm64_neon_no_mte",
